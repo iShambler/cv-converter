@@ -1,0 +1,14 @@
+# Credenciales - NUNCA subir
+.env
+
+# Archivos generados
+/output/*.docx
+/output/*.txt
+/uploads/*
+!/uploads/.gitkeep
+!/output/.gitkeep
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp

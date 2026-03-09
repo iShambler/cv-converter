@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/xampp99/php/php.exe /c/xampp99/htdocs/cv-converter/_debug_atos.php)",
+      "Bash(unzip -p \"templates/Avanade.docx\" \"word/document.xml\")",
+      "Bash(/c/xampp99/php/php.exe -l \"C:/xampp99/htdocs/cv-converter/lib/TemplateFiller.php\")"
+    ]
+  }
+}
