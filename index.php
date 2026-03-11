@@ -1,3 +1,9 @@
+<?php
+require_once 'config.php';
+require_once 'lib/Security.php';
+Security::initSession();
+$csrfToken = Security::generateCsrfToken();
+?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -132,10 +138,8 @@
 </div>
 
 <script>
-const TEMPLATES = <?php
-    require_once 'config.php';
-    echo json_encode(TEMPLATES);
-?>;
+const CSRF_TOKEN = '<?= $csrfToken ?>';
+const TEMPLATES = <?= json_encode(TEMPLATES) ?>;
 
 // ===== WIZARD STATE =====
 let currentStep = 1;
@@ -272,6 +276,7 @@ async function doProcess(mode) {
 
     const formData = new FormData();
     formData.append('cv_file', fileInput.files[0]);
+    formData.append('csrf_token', CSRF_TOKEN);
     if (template) formData.append('template', template.value);
 
     let fakePct = 10;
@@ -302,10 +307,12 @@ async function doProcess(mode) {
     try {
         const resp = await fetch(endpoint, { method: 'POST', body: formData });
         clearInterval(progressInterval);
+
+        if (resp.status === 429) { throw new Error('Demasiadas peticiones. Espera un momento.'); }
+
         setProgress(90, 'Procesando respuesta...');
 
         const text = await resp.text();
-        console.log(`[${mode}] Respuesta:`, text);
 
         let data;
         try { data = JSON.parse(text); }
@@ -327,7 +334,7 @@ async function doProcess(mode) {
             result.querySelector('p').textContent = `Texto: ${data.text_length} caracteres`;
 
             const dbgBtn = document.getElementById('debugDownloadBtn');
-            dbgBtn.href = data.debug_url;
+            dbgBtn.href = 'download.php?file=' + encodeURIComponent(data.debug_filename);
             dbgBtn.download = data.debug_filename;
             dbgBtn.style.display = 'inline-flex';
 
@@ -349,7 +356,7 @@ async function doProcess(mode) {
             result.querySelector('p').textContent = `Plantilla: ${TEMPLATES[template.value].name}`;
 
             const dlBtn = document.getElementById('downloadBtn');
-            dlBtn.href = data.download_url;
+            dlBtn.href = 'download.php?file=' + encodeURIComponent(data.filename);
             dlBtn.download = data.filename;
             dlBtn.style.display = 'inline-flex';
 

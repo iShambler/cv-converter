@@ -80,9 +80,10 @@ class TextExtractor
     private static function extractFromDoc(string $filePath): string
     {
         // Intentar herramientas del sistema
-        $output = self::tryCommand("antiword \"$filePath\"");
+        $safeFile = escapeshellarg($filePath);
+        $output = self::tryCommand("antiword $safeFile");
         if ($output) return $output;
-        $output = self::tryCommand("catdoc \"$filePath\"");
+        $output = self::tryCommand("catdoc $safeFile");
         if ($output) return $output;
 
         // Extracción bruta de strings UTF-16LE

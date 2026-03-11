@@ -13,10 +13,20 @@ header('Content-Type: application/json');
 
 try {
     require_once __DIR__ . '/../config.php';
+    require_once __DIR__ . '/../lib/Security.php';
     require_once __DIR__ . '/../lib/Database.php';
+
+    Security::initSession();
 
     $method = $_SERVER['REQUEST_METHOD'];
     $action = $_GET['action'] ?? $_POST['action'] ?? '';
+
+    // CSRF validation for write operations
+    if (in_array($action, ['save', 'delete', 'init'])) {
+        Security::validateCsrf();
+    }
+
+    Security::enforceRateLimit('api', 60, 60);
 
     switch ($action) {
 

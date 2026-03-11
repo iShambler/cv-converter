@@ -90,12 +90,16 @@ class Database
 
         $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
-        $stmt = $pdo->prepare("SELECT * FROM cvs $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
+        $params[] = $limit;
+        $params[] = $offset;
+        $stmt = $pdo->prepare("SELECT * FROM cvs $where ORDER BY created_at DESC LIMIT ? OFFSET ?");
         $stmt->execute($params);
         $rows = $stmt->fetchAll();
 
+        // Count query uses original params without limit/offset
+        $countParams = array_slice($params, 0, -2);
         $stmtCount = $pdo->prepare("SELECT COUNT(*) FROM cvs $where");
-        $stmtCount->execute($params);
+        $stmtCount->execute($countParams);
         $total = (int) $stmtCount->fetchColumn();
 
         return ['rows' => $rows, 'total' => $total];

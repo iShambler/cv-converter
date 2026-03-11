@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/xampp99/php/php.exe -r \"echo extension_loaded\\(''fileinfo''\\) ? ''fileinfo OK'' : ''fileinfo MISSING'';\")"
+    ]
+  }
+}

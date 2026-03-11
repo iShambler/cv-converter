@@ -1,3 +1,9 @@
+<?php
+require_once 'config.php';
+require_once 'lib/Security.php';
+Security::initSession();
+$csrfToken = Security::generateCsrfToken();
+?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -70,8 +76,8 @@
 </div>
 
 <script>
-<?php require_once 'config.php'; ?>
-const TEMPLATES = <?php echo json_encode(TEMPLATES); ?>;
+const CSRF_TOKEN = '<?= $csrfToken ?>';
+const TEMPLATES = <?= json_encode(TEMPLATES) ?>;
 
 const PER_PAGE = 5;
 let currentTemplate = '';
@@ -94,6 +100,7 @@ async function loadFolders() {
 
     try {
         const resp = await fetch('api/cvs.php?action=counts');
+
         const data = await resp.json();
         if (!data.success) throw new Error(data.error);
 
@@ -168,6 +175,7 @@ async function loadCvs() {
             limit: PER_PAGE,
         });
         const resp = await fetch('api/cvs.php?' + params);
+
         const data = await resp.json();
 
         if (!data.success) throw new Error(data.error);
@@ -195,7 +203,7 @@ async function loadCvs() {
                     </div>
                 </div>
                 <div class="cv-item-actions">
-                    <a href="output/${encodeURIComponent(cv.archivo)}" download class="btn btn-sm btn-success" title="Descargar">
+                    <a href="download.php?file=${encodeURIComponent(cv.archivo)}" download class="btn btn-sm btn-success" title="Descargar">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     </a>
                     <button class="btn btn-sm btn-danger-outline" title="Eliminar" onclick="confirmDelete(${cv.id})">
@@ -259,7 +267,8 @@ document.getElementById('btnConfirmDelete').addEventListener('click', async () =
     if (!deleteId) return;
 
     try {
-        const resp = await fetch(`api/cvs.php?action=delete&id=${deleteId}`, { method: 'POST' });
+        const resp = await fetch(`api/cvs.php?action=delete&id=${deleteId}&csrf_token=${CSRF_TOKEN}`, { method: 'POST' });
+
         const data = await resp.json();
         if (!data.success) throw new Error(data.error);
         deleteModal.classList.remove('active');
@@ -273,7 +282,8 @@ document.getElementById('btnConfirmDelete').addEventListener('click', async () =
 // ===== UTILS =====
 async function initDb() {
     try {
-        const resp = await fetch('api/cvs.php?action=init');
+        const resp = await fetch('api/cvs.php?action=init&csrf_token=' + CSRF_TOKEN);
+
         const data = await resp.json();
         if (!data.success) throw new Error(data.error);
         loadFolders();

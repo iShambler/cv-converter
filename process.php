@@ -7,10 +7,15 @@ header('Content-Type: application/json');
 
 try {
     require_once 'config.php';
+    require_once 'lib/Security.php';
     require_once 'lib/TextExtractor.php';
     require_once 'lib/CvParser.php';
     require_once 'lib/TemplateFiller.php';
     require_once 'lib/Database.php';
+
+    Security::initSession();
+    Security::validateCsrf();
+    Security::enforceRateLimit('convert', 20, 60);
 
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         throw new Exception('Método no permitido');
@@ -34,6 +39,11 @@ try {
 
     if ($file['size'] > MAX_FILE_SIZE) {
         throw new Exception('Archivo demasiado grande');
+    }
+
+    // Validar MIME type real
+    if (!Security::validateMimeType($file['tmp_name'], $ext)) {
+        throw new Exception('El tipo de archivo no coincide con la extensión');
     }
 
     // Mover archivo subido

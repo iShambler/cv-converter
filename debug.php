@@ -8,9 +8,14 @@ header('Content-Type: application/json; charset=utf-8');
 
 try {
     require_once 'config.php';
+    require_once 'lib/Security.php';
     require_once 'lib/TextExtractor.php';
     require_once 'lib/CvParser.php';
     require_once 'lib/TemplateFiller.php';
+
+    Security::initSession();
+    Security::validateCsrf();
+    Security::enforceRateLimit('debug', 10, 60);
 
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         throw new Exception('Metodo no permitido');
