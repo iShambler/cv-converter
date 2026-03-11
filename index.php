@@ -90,10 +90,6 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                     Convertir CV
                 </button>
-                <button type="button" class="btn btn-outline-light btn-lg" id="btnDebug">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                    Solo extraer datos
-                </button>
             </div>
 
             <div class="progress-container" id="progress">
@@ -118,8 +114,7 @@
                     </a>
                 </div>
                 <br>
-                <button type="button" class="toggle-json" id="toggleJson">Ver datos extraidos (JSON)</button>
-                <div class="json-preview" id="jsonPreview">
+                <div class="json-preview" id="jsonPreview" style="display:none;">
                     <pre id="jsonContent"></pre>
                 </div>
                 <button type="button" class="toggle-json" id="toggleText" style="display:none;">Ver texto extraido del PDF</button>
@@ -247,7 +242,6 @@ const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
 const result = document.getElementById('result');
 const btnConvert = document.getElementById('btnConvert');
-const btnDebug = document.getElementById('btnDebug');
 
 const iconSuccess = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 const iconError = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
@@ -255,7 +249,6 @@ const iconSearch = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" 
 
 // ===== CONVERT / DEBUG =====
 form.addEventListener('submit', (e) => { e.preventDefault(); doProcess('convert'); });
-btnDebug.addEventListener('click', () => { doProcess('debug'); });
 
 async function doProcess(mode) {
     if (!fileInput.files.length) { showError('Selecciona un archivo CV'); return; }
@@ -267,7 +260,6 @@ async function doProcess(mode) {
     result.className = 'result';
     progress.classList.add('active');
     btnConvert.disabled = true;
-    btnDebug.disabled = true;
     btnBack.disabled = true;
     document.getElementById('downloadBtn').style.display = 'none';
     document.getElementById('debugDownloadBtn').style.display = 'none';
@@ -376,14 +368,10 @@ async function doProcess(mode) {
     }
 
     btnConvert.disabled = false;
-    btnDebug.disabled = false;
     btnBack.disabled = false;
 }
 
 // ===== TOGGLES =====
-document.getElementById('toggleJson').addEventListener('click', () => {
-    document.getElementById('jsonPreview').classList.toggle('active');
-});
 document.getElementById('toggleText').addEventListener('click', () => {
     document.getElementById('textPreview').classList.toggle('active');
 });
