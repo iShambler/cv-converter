@@ -218,7 +218,7 @@ JSON;
 
         $payload = json_encode([
             'model'      => $this->model,
-            'max_tokens' => 4096,
+            'max_tokens' => 16384,
             'system'     => $this->getSystemPrompt(),
             'messages'   => [['role' => 'user', 'content' => $contentParts]],
         ]);
@@ -233,7 +233,7 @@ JSON;
 
         $payload = json_encode([
             'model'      => $this->model,
-            'max_tokens' => 4096,
+            'max_tokens' => 16384,
             'system'     => $this->getSystemPrompt(),
             'messages'   => [['role' => 'user', 'content' => $userPrompt]],
         ]);
@@ -272,6 +272,10 @@ JSON;
 
         if (!isset($body['content'][0]['text'])) {
             throw new Exception("Respuesta inesperada de Claude");
+        }
+
+        if (($body['stop_reason'] ?? '') === 'max_tokens') {
+            throw new Exception("La respuesta de Claude se truncó (CV demasiado extenso). Intenta con un CV más corto.");
         }
 
         return $body['content'][0]['text'];
