@@ -8,7 +8,8 @@
 !/uploads/.gitkeep
 !/output/.gitkeep
 
-# Editor / OS
+# Editor / OS / Tools
 .DS_Store
 Thumbs.db
 *.swp
+.claude/

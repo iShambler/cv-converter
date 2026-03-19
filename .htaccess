@@ -33,9 +33,7 @@
 # Disable directory listing
 Options -Indexes
 
-# Prevent PHP execution in uploads/output
-<DirectoryMatch "^.*(uploads|output).*$">
-    <FilesMatch "\.php$">
-        Require all denied
-    </FilesMatch>
-</DirectoryMatch>
+# Prevent PHP execution in uploads/output (via RewriteRule, since DirectoryMatch is not allowed in .htaccess)
+<IfModule mod_rewrite.c>
+    RewriteRule ^(uploads|output)/.*\.php$ - [F,L]
+</IfModule>
