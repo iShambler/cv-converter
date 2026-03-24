@@ -1,6 +1,6 @@
 <?php
 /**
- * CV Converter - TemplateFiller v11
+ * CV Converter - TemplateFiller v13
  *
  * Mejoras v11:
  * - Las secciones EXPERIENCIA, FORMACIÓN y CONOCIMIENTOS se construyen
@@ -17,6 +17,7 @@ class TemplateFiller
 {
     private string $templatePath;
     private string $outputPath;
+    private string $downloadName;
     private array  $cv;
     private string $templateKey;
     private string $apiKey;
@@ -43,8 +44,17 @@ class TemplateFiller
 
         $nombre = $this->cv['datos_personales']['nombre_completo'] ?? 'candidato';
         $nombre = preg_replace('/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ\s]/u', '', $nombre);
-        $nombre = str_replace(' ', '_', trim($nombre));
-        $this->outputPath = OUTPUT_PATH . "CV_{$nombre}_" . ucfirst($templateKey) . '_' . date('Ymd_His') . '.docx';
+        $nombreFile = str_replace(' ', '_', trim($nombre));
+        $this->outputPath = OUTPUT_PATH . "CV_{$nombreFile}_" . ucfirst($templateKey) . '_' . date('Ymd_His') . '.docx';
+
+        // Nombre de descarga limpio: "Nombre Apellido_Plantilla.docx"
+        $templateName = ucfirst($templateKey);
+        $this->downloadName = trim($nombre) . '_' . $templateName . '.docx';
+    }
+
+    public function getDownloadName(): string
+    {
+        return $this->downloadName ?? basename($this->outputPath);
     }
 
     // =========================================================================
@@ -70,6 +80,7 @@ class TemplateFiller
         $xml = $this->applyFormacionAcademicaSection($xml);
         $xml = $this->applyFormacionComplementariaSection($xml);
         $xml = $this->applyConocimientosTecnicosParas($xml);
+        $xml = $this->applyIdiomasSection($xml);
 
         // PASO 2E: Campos específicos de Avanade (página 2 - Summary)
         if ($this->templateKey === 'avanade') {
@@ -164,6 +175,7 @@ class TemplateFiller
             'conocimientos_tecnicos'      => $this->cv['conocimientos_tecnicos'] ?? [],
             'certificaciones'             => $this->cv['certificaciones']       ?? [],
             'soft_skills'                 => $this->cv['soft_skills']           ?? '',
+            'fecha_actualizacion'         => date('d/m/Y'),
         ];
 
         $dataJson = json_encode($dataResumen, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
@@ -173,9 +185,12 @@ Eres un experto en relleno de plantillas de CV corporativas.
 Tu misión: INTERPRETAR cada campo de la plantilla y decidir qué datos del candidato encajan, aunque los nombres no coincidan exactamente.
 
 SECCIONES QUE NO DEBES TOCAR (las gestiona otro proceso automático):
-- Títulos de sección como EXPERIENCIA, FORMACIÓN, CONOCIMIENTOS, COMPETENCIAS TÉCNICAS, IDIOMAS y sus equivalentes en inglés (Experience, Training, Education, Technical Skills).
+- Títulos de sección como EXPERIENCIA, FORMACIÓN, CONOCIMIENTOS, COMPETENCIAS TÉCNICAS, IDIOMAS, ENTORNOS y sus equivalentes en inglés (Experience, Training, Education, Technical Skills).
+- "Entornos/conocimientos técnicos" y variantes — NO usar cell_after_label ni ninguna sustitución sobre este título.
 - Los párrafos placeholder DENTRO de esas secciones (ej: "Mes año – mes año", "Empresa", "Categoria", "Funciones:", "Entorno:", "Cliente:").
 - Esos se rellenan automáticamente — si los incluyes, se duplicarán.
+- EXCEPCIÓN: SÍ puedes rellenar celdas de tabla del cuadro de control/evaluación que contengan datos de idiomas (columna "Nivel"), experiencia, etc. Solo NO toques la sección de contenido libre de idiomas.
+- AVANADE: SÍ debes rellenar los párrafos del Summary (página 2): "Nombre" con nombre completo, "Madrid" con residencia, "Nivel de inglés:" con el nivel, disponibilidad entrevista/incorporación. Usa full_paragraph para estos campos.
 
 TODO LO DEMÁS: RELLÉNALO. Interpreta creativamente.
 
@@ -195,6 +210,7 @@ REGLAS DE INTERPRETACIÓN:
 - Si un párrafo tiene VARIOS datos mezclados, usa "full_paragraph" y construye el texto completo manteniendo la estructura del párrafo original. Ejemplo: "Ubicacion, año nacimiento XXXX." → "Málaga, año nacimiento XXXX." (si solo tienes residencia pero no fecha).
 - Para idiomas en párrafos tipo "Inglés: Técnico." usa "full_paragraph" con el nivel real.
 - exp_total: úsalo para campos de experiencia total/años de experiencia.
+- fecha_actualizacion: úsalo para campos de "Fecha actualización", "Fecha de actualización" o similares.
 - Para campos de tabla (FILA), usa "cell_after_label".
 - Para párrafos simples, usa "paragraph_with_label" o "full_paragraph" según convenga.
 
@@ -203,6 +219,9 @@ PROHIBICIONES ABSOLUTAS:
 - NUNCA inventes valores. NUNCA pongas "No especificado", "No disponible", "N/A", "Sin datos", "texto", "XXXX", ni NINGÚN valor genérico o inventado.
 - NUNCA borres información que ya tiene la plantilla si no tienes un dato real para reemplazarla.
 - NO RELLENAR: ISLAS CANARIAS, Prueba realizada SI/NO, Soft Skills, Valoracion Final, Otras habilidades, Cumple este candidato, Recomendaría (esos son campos de evaluación interna).
+- PLANTILLA ATOS: NO tocar la tabla de IDIOMAS (LECTURA, ESCRITURA, EXPRESIÓN ORAL) — la gestiona PHP automáticamente.
+- SÍ RELLENAR: En tablas del cuadro de control (Accenture/Arelance), si hay una fila de Idiomas con columna "Nivel", rellena el nivel del idioma (ej: "Avanzado", "B2", etc.) usando cell_after_label. También rellena "Experiencia" en tecnología principal si hay datos.
+- IMPORTANTE: El campo "Experiencia (meses/años) en tecnología principal" debe rellenarse con exp_total. NO ponerlo en "otras tecnologías". El label para cell_after_label es "Experiencia (meses/años) en tecnología principal".
 
 Responde SOLO con JSON válido. Sin markdown. Sin comentarios.
 {"substitutions": [...]}
@@ -232,6 +251,8 @@ SYSTEM;
         if (empty($experiencias)) return $xml;
 
         $lines = [];
+        $tpl = $this->templateKey;
+
         foreach ($experiencias as $exp) {
             $inicio   = trim($exp['fecha_inicio']        ?? '');
             $fin      = trim($exp['fecha_fin']           ?? '');
@@ -242,15 +263,66 @@ SYSTEM;
             $func     = trim($exp['funciones']           ?? '');
             $entorno  = trim($exp['entorno_tecnologico'] ?? '');
 
-            $fechaStr = $inicio . ($fin ? ' - ' . $fin : '');
-            if ($fechaStr) $lines[] = $fechaStr;
-            if ($empresa)  $lines[] = $empresa;
-
+            $fechaStr   = $inicio . ($fin ? ' - ' . $fin : '');
             $cargoFinal = $cargo ?: $cat;
-            if ($cargoFinal) $lines[] = $cargoFinal;
-            if ($cliente)    $lines[] = 'Cliente: ' . $cliente;
-            if ($func)       $lines[] = 'Funciones: ' . $func;
-            if ($entorno)    $lines[] = 'Entorno: ' . $entorno;
+
+            if ($tpl === 'atos') {
+                // Atos: líneas separadas — Fecha / Empresa / Cargo / Funciones: texto inline / Entorno:
+                if ($fechaStr)   $lines[] = $fechaStr;
+                if ($empresa)    $lines[] = $empresa;
+                if ($cargoFinal) $lines[] = $cargoFinal;
+                if ($func)       $lines[] = 'Funciones: ' . $func;
+                if ($entorno)    $lines[] = 'Entorno: ' . $this->normalizeEntornoCommas($entorno);
+            } elseif ($tpl === 'inetum') {
+                // Inetum: líneas separadas, funciones con guiones
+                if ($fechaStr)   $lines[] = $fechaStr;
+                if ($empresa)    $lines[] = $empresa;
+                if ($cargoFinal) $lines[] = $cargoFinal;
+                if ($entorno)    $lines[] = 'Entorno: ' . $this->normalizeEntornoCommas($entorno);
+                if ($cliente)    $lines[] = 'Cliente: ' . $cliente;
+                if ($func) {
+                    $lines[] = 'Funciones:';
+                    $bullets = $this->splitFuncionesIntoBullets($func);
+                    foreach ($bullets as $b) $lines[] = '- ' . $b;
+                }
+            } elseif ($tpl === 'ricoh') {
+                // Ricoh: labels explícitos negrita, funciones con bullets, entorno negrita
+                if ($fechaStr)   $lines[] = $fechaStr;
+                if ($empresa)    $lines[] = 'Empresa: ' . $empresa;
+                if ($cargoFinal) $lines[] = 'Título de posición: ' . $cargoFinal;
+                if ($func) {
+                    $lines[] = 'Funciones:';
+                    $bullets = $this->splitFuncionesIntoBullets($func);
+                    foreach ($bullets as $b) $lines[] = '• ' . $b;
+                }
+                if ($entorno) $lines[] = 'Entorno: ' . $this->normalizeEntornoCommas($entorno);
+            } elseif ($tpl === 'avanade') {
+                // Avanade: labels explícitos + "Herramientas:" en vez de "Entorno:"
+                if ($fechaStr)   $lines[] = $fechaStr;
+                if ($empresa)    $lines[] = 'Empresa: ' . $empresa;
+                if ($cargoFinal) $lines[] = 'Rol: ' . $cargoFinal;
+                if ($cliente)    $lines[] = 'Cliente: ' . $cliente;
+                if ($func) {
+                    $lines[] = 'Funciones:';
+                    $lines[] = $func;
+                }
+                if ($entorno) {
+                    $lines[] = 'Herramientas: ' . $this->normalizeEntornoCommas($entorno);
+                }
+            } else {
+                // Formato genérico (Arelance, Accenture, etc.)
+                if ($fechaStr)   $lines[] = $fechaStr;
+                if ($empresa)    $lines[] = 'Empresa: ' . $empresa;
+                if ($cargoFinal) $lines[] = 'Rol/Categoría: ' . $cargoFinal;
+                if ($cliente)    $lines[] = 'Cliente: ' . $cliente;
+                if ($func) {
+                    $lines[] = 'Funciones:';
+                    $lines[] = $func;
+                }
+                if ($entorno) {
+                    $lines[] = 'Entorno: ' . $this->normalizeEntornoCommas($entorno);
+                }
+            }
 
             $lines[] = ''; // separador entre experiencias
         }
@@ -267,6 +339,57 @@ SYSTEM;
         return $xml;
     }
 
+    /**
+     * Divide el texto de funciones en items individuales.
+     * Separa por ". " (oraciones), ";" o saltos de línea.
+     */
+    private function splitFuncionesIntoBullets(string $funciones): array
+    {
+        // Primero intentar por saltos de línea
+        if (str_contains($funciones, "\n")) {
+            $items = explode("\n", $funciones);
+        } else {
+            // Separar por ". " preservando abreviaciones comunes
+            $items = preg_split('/\.\s+(?=[A-ZÁÉÍÓÚÑ])/', $funciones);
+        }
+
+        $result = [];
+        foreach ($items as $item) {
+            $item = trim($item, " .\t\n\r");
+            if ($item !== '') {
+                // Capitalizar primera letra
+                $result[] = mb_strtoupper(mb_substr($item, 0, 1, 'UTF-8'), 'UTF-8')
+                          . mb_substr($item, 1, null, 'UTF-8');
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Asegura que los skills del entorno estén separados por comas.
+     * Si ya tienen comas, los deja. Si no, intenta separarlos inteligentemente.
+     */
+    private function normalizeEntornoCommas(string $entorno): string
+    {
+        $entorno = trim($entorno);
+        if (empty($entorno)) return '';
+
+        // Si ya contiene comas, asumir que está bien formateado
+        if (str_contains($entorno, ',')) {
+            // Limpiar posibles espacios extras alrededor de las comas
+            return preg_replace('/\s*,\s*/', ', ', $entorno);
+        }
+
+        // Sin comas: puede ser skills separados por saltos de línea o solo espacios
+        if (str_contains($entorno, "\n")) {
+            $parts = array_filter(array_map('trim', explode("\n", $entorno)));
+            return implode(', ', $parts);
+        }
+
+        // Solo espacios — devolver tal cual (Claude debería haberlo separado con comas)
+        return $entorno;
+    }
+
     // =========================================================================
     // PASO 2B: Construir y aplicar FORMACIÓN ACADÉMICA desde el JSON
     // =========================================================================
@@ -276,20 +399,38 @@ SYSTEM;
         $items = $this->cv['formacion_academica'] ?? [];
         if (empty($items)) return $xml;
 
+        $tpl = $this->templateKey;
+        $isCompactStyle = in_array($tpl, ['arelance', 'accenture', 'avanade']);
+
         $lines = [];
         foreach ($items as $item) {
             $fecha  = trim($item['fecha']  ?? '');
             $titulo = trim($item['titulo'] ?? '');
             $centro = trim($item['centro'] ?? '');
 
-            if ($fecha)  $lines[] = $fecha;
-            if ($titulo) $lines[] = $titulo;
-            if ($centro) $lines[] = $centro;
+            if ($isCompactStyle) {
+                // Formato compacto: Año + "Título. Centro" en una línea
+                $year = $this->extractYear($fecha);
+                if ($year) $lines[] = $year;
+                $tituloLine = $titulo;
+                if ($centro) $tituloLine .= '. ' . $centro;
+                if ($tituloLine) $lines[] = $tituloLine;
+            } else {
+                if ($fecha)  $lines[] = $fecha;
+                if ($titulo) $lines[] = $titulo;
+                if ($centro) $lines[] = $centro;
+            }
             $lines[] = '';
         }
         while (!empty($lines) && end($lines) === '') array_pop($lines);
 
         $content = implode("\n", $lines);
+
+        // Ricoh: inyectar en tabla-contenido vacía después del título
+        if ($this->templateKey === 'ricoh') {
+            $xml = $this->applyRicohContentTable($xml, 'Formación', $content);
+            return $xml;
+        }
 
         // Intentar con y sin tilde, y en inglés
         $xml = $this->applySectionContent($xml, 'FORMACION ACADEMICA', $content);
@@ -308,6 +449,9 @@ SYSTEM;
         $items = $this->cv['formacion_complementaria'] ?? [];
         if (empty($items)) return $xml;
 
+        $tpl = $this->templateKey;
+        $isCompactStyle = in_array($tpl, ['arelance', 'accenture', 'avanade']);
+
         $lines = [];
         foreach ($items as $item) {
             $fecha  = trim($item['fecha']  ?? '');
@@ -315,10 +459,18 @@ SYSTEM;
             $centro = trim($item['centro'] ?? '');
             $horas  = trim($item['horas']  ?? '');
 
-            if ($fecha)  $lines[] = $fecha;
-            if ($titulo) $lines[] = $titulo;
-            if ($centro) $lines[] = $centro;
-            if ($horas)  $lines[] = 'Horas: ' . $horas;
+            if ($isCompactStyle) {
+                $year = $this->extractYear($fecha);
+                if ($year) $lines[] = $year;
+                $tituloLine = $titulo;
+                if ($centro) $tituloLine .= '. ' . $centro;
+                if ($tituloLine) $lines[] = $tituloLine;
+            } else {
+                if ($fecha)  $lines[] = $fecha;
+                if ($titulo) $lines[] = $titulo;
+                if ($centro) $lines[] = $centro;
+                if ($horas)  $lines[] = 'Horas: ' . $horas;
+            }
             $lines[] = '';
         }
         while (!empty($lines) && end($lines) === '') array_pop($lines);
@@ -368,61 +520,435 @@ SYSTEM;
         $allParts = array_filter([$lenguajes, $ssoo, $bbdd, $otros]);
         if (!empty($allParts)) {
             $sectionContent = implode("\n", $allParts);
-            $xml = $this->applySectionContent($xml, 'CONOCIMIENTOS TECNICOS', $sectionContent);
-            $xml = $this->applySectionContent($xml, 'COMPETENCIAS TECNICAS', $sectionContent);
-            $xml = $this->applySectionContent($xml, 'COMPETENCIAS TÉCNICAS', $sectionContent);
-            $xml = $this->applySectionContent($xml, 'Entornos/conocimientos técnicos', $sectionContent);
-            $xml = $this->applySectionContent($xml, 'Technical Skills', $sectionContent);
+
+            // Inetum: COMPETENCIAS TÉCNICAS tiene una tabla placeholder después del título
+            if ($this->templateKey === 'inetum') {
+                $xml = $this->applySectionContentIntoTable($xml, 'COMPETENCIAS TÉCNICAS', $sectionContent);
+            } elseif ($this->templateKey === 'ricoh') {
+                // Ricoh: inyectar en la tabla-contenido vacía que sigue al título
+                $xml = $this->applyRicohContentTable($xml, 'Entornos/conocimientos', $sectionContent);
+            } elseif ($this->templateKey === 'avanade') {
+                // Avanade: Technical Skills y Microsoft Specific Skill, ambos en negrita
+                // Separar Microsoft skills si existen
+                $msSkills = '';
+                $otherSkills = $sectionContent;
+                // Por ahora todo va a Technical Skills; Microsoft Specific se deja vacío si no hay datos específicos
+                $xml = $this->applySectionContent($xml, 'Technical Skills', $otherSkills, true);
+                if ($msSkills) {
+                    $xml = $this->applySectionContent($xml, 'Microsoft Specific Skill', $msSkills, true);
+                }
+            } else {
+                // Arelance/Accenture: conocimientos en negrita según Comentarios
+                $boldKnowledge = in_array($this->templateKey, ['arelance', 'accenture']);
+                $xml = $this->applySectionContent($xml, 'CONOCIMIENTOS TECNICOS', $sectionContent, $boldKnowledge);
+                $xml = $this->applySectionContent($xml, 'COMPETENCIAS TECNICAS', $sectionContent, $boldKnowledge);
+                $xml = $this->applySectionContent($xml, 'COMPETENCIAS TÉCNICAS', $sectionContent, $boldKnowledge);
+                $xml = $this->applySectionContent($xml, 'Entornos/conocimientos técnicos', $sectionContent);
+                $xml = $this->applySectionContent($xml, 'Technical Skills', $sectionContent);
+            }
         }
 
         return $xml;
+    }
+
+    /**
+     * Extrae solo el año de una fecha o rango de fechas.
+     * "08/2018 - 10/2022" → "2022" (año final)
+     * "08/2018" → "2018"
+     * "2022" → "2022"
+     */
+    private function extractYear(string $date): string
+    {
+        $date = trim($date);
+        if (empty($date)) return '';
+
+        // Si es rango, tomar el año final
+        if (str_contains($date, ' - ')) {
+            $parts = explode(' - ', $date);
+            $date = trim(end($parts));
+        }
+
+        // Extraer año de 4 dígitos
+        if (preg_match('/(\d{4})/', $date, $m)) {
+            return $m[1];
+        }
+        return $date;
+    }
+
+    // =========================================================================
+    // PASO 2F: Construir y aplicar IDIOMAS desde el JSON
+    // =========================================================================
+
+    private function applyIdiomasSection(string $xml): string
+    {
+        $idiomas = $this->cv['idiomas'] ?? [];
+        if (empty($idiomas)) return $xml;
+
+        // Avanade: el nivel de inglés ya va en Summary, no necesita sección IDIOMAS.
+        if ($this->templateKey === 'avanade') return $xml;
+
+        // Atos: idiomas van en tabla columnar (LECTURA/ESCRITURA/EXPRESIÓN ORAL)
+        if ($this->templateKey === 'atos') {
+            return $this->applyAtosIdiomasTable($xml);
+        }
+
+        // Ricoh: idiomas van en tabla con columnas Hablado/Escrito/Leído
+        if ($this->templateKey === 'ricoh') {
+            return $this->applyRicohIdiomasTable($xml);
+        }
+
+        $lines = [];
+        foreach ($idiomas as $idioma) {
+            $nombre = trim($idioma['idioma'] ?? '');
+            $nivel  = trim($idioma['nivel_general'] ?? '');
+            if (empty($nombre)) continue;
+
+            // Capitalizar nombre del idioma
+            $nombre = mb_strtoupper(mb_substr($nombre, 0, 1, 'UTF-8'), 'UTF-8')
+                    . mb_substr($nombre, 1, null, 'UTF-8');
+
+            if ($nivel) {
+                $lines[] = $nombre . ': ' . $nivel;
+            } else {
+                $lines[] = $nombre;
+            }
+        }
+
+        if (empty($lines)) return $xml;
+
+        $content = implode("\n", $lines);
+
+        // Buscar la sección IDIOMAS fuera de tablas para evitar confundir con
+        // "Idiomas" en la tabla del cuadro de control
+        $xml = $this->applySectionContentOutsideTable($xml, 'IDIOMAS', $content);
+        return $xml;
+    }
+
+    /**
+     * Rellena la tabla de idiomas de Atos.
+     * Estructura: fila header [vacio|LECTURA|ESCRITURA|EXPRESIÓN ORAL]
+     *             fila datos  [idioma|nivel|nivel|nivel]
+     * Busca la fila con "LECTURA" y rellena la fila siguiente.
+     */
+    private function applyAtosIdiomasTable(string $xml): string
+    {
+        $idiomas = $this->cv['idiomas'] ?? [];
+        if (empty($idiomas)) return $xml;
+
+        // Ordenar: idiomas no nativos primero (inglés, francés, etc.), nativos al final
+        usort($idiomas, function ($a, $b) {
+            $nivelA = mb_strtolower(trim($a['nivel_general'] ?? ''), 'UTF-8');
+            $nivelB = mb_strtolower(trim($b['nivel_general'] ?? ''), 'UTF-8');
+            $aIsNative = in_array($nivelA, ['nativo', 'native', 'lengua materna', 'mother tongue']);
+            $bIsNative = in_array($nivelB, ['nativo', 'native', 'lengua materna', 'mother tongue']);
+            if ($aIsNative && !$bIsNative) return 1;
+            if (!$aIsNative && $bIsNative) return -1;
+            return 0;
+        });
+
+        // Buscar la fila que contiene "LECTURA" (header de la tabla de idiomas)
+        preg_match_all('/<w:tr\b[^>]*>((?:(?!<\/w:tr>).)*?)<\/w:tr>/s', $xml, $rowMatches, PREG_OFFSET_CAPTURE);
+
+        $headerRowIdx = -1;
+        foreach ($rowMatches[0] as $idx => $rowMatch) {
+            if (stripos($rowMatch[0], 'LECTURA') !== false) {
+                $headerRowIdx = $idx;
+                break;
+            }
+        }
+
+        if ($headerRowIdx === -1) return $xml;
+
+        // La fila de datos es la siguiente al header
+        $dataRowIdx = $headerRowIdx + 1;
+        if (!isset($rowMatches[0][$dataRowIdx])) return $xml;
+
+        $templateRowXml = $rowMatches[0][$dataRowIdx][0];
+        $insertOffset   = $rowMatches[0][$dataRowIdx][1];
+
+        // Construir todas las filas de idiomas
+        $allRowsXml = '';
+        foreach ($idiomas as $idioma) {
+            $nombre  = trim($idioma['idioma'] ?? '');
+            $nivel   = trim($idioma['nivel_general'] ?? '');
+            $lectura = trim($idioma['lectura'] ?? '') ?: $nivel;
+            $escrit  = trim($idioma['escritura'] ?? '') ?: $nivel;
+            $oral    = trim($idioma['expresion_oral'] ?? '') ?: $nivel;
+
+            if (empty($nombre) || empty($nivel)) continue;
+
+            // Clonar la fila template y rellenar celdas
+            $rowXml = $templateRowXml;
+            preg_match_all('/(<w:tc\b[^>]*>(?:(?!<\/w:tc>).)*?<\/w:tc>)/s', $rowXml, $cells);
+            if (count($cells[1]) < 4) continue;
+
+            $values = [
+                htmlspecialchars($nombre, ENT_XML1, 'UTF-8'),
+                htmlspecialchars($lectura, ENT_XML1, 'UTF-8'),
+                htmlspecialchars($escrit, ENT_XML1, 'UTF-8'),
+                htmlspecialchars($oral, ENT_XML1, 'UTF-8'),
+            ];
+
+            foreach ($cells[1] as $i => $cell) {
+                if ($i >= 4) break;
+                $newCell = $this->injectInCell($cell, $values[$i]);
+                $rowXml  = str_replace($cell, $newCell, $rowXml);
+            }
+            $allRowsXml .= $rowXml;
+        }
+
+        if (empty($allRowsXml)) return $xml;
+
+        // Reemplazar la fila template vacía con todas las filas de idiomas
+        return substr_replace($xml, $allRowsXml, $insertOffset, strlen($templateRowXml));
+    }
+
+    /**
+     * Ricoh: Busca una tabla cuyo texto contenga $titleFragment, y luego inyecta
+     * contenido en la SIGUIENTE tabla (la tabla-contenido vacía).
+     * Patrón Ricoh: [tabla-título] → [párrafo vacío] → [tabla-contenido vacía]
+     */
+    private function applyRicohContentTable(string $xml, string $titleFragment, string $content): string
+    {
+        if (empty($content)) return $xml;
+
+        $normalize = [$this, 'normalizeForMatch'];
+        $titleNorm = $normalize($titleFragment);
+
+        // Encontrar TODAS las tablas
+        preg_match_all('~<w:tbl\b[^>]*>.*?</w:tbl>~s', $xml, $allTables, PREG_OFFSET_CAPTURE);
+
+        // Buscar la tabla cuyo texto normalizado contenga el fragmento del título
+        $titleTableIdx = -1;
+        foreach ($allTables[0] as $idx => $tbl) {
+            preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $tbl[0], $texts);
+            $tableText = $normalize(implode('', $texts[1]));
+            if (str_contains($tableText, $titleNorm)) {
+                $titleTableIdx = $idx;
+                break;
+            }
+        }
+
+        if ($titleTableIdx === -1) return $xml;
+
+        // La tabla-contenido es la SIGUIENTE
+        $contentTableIdx = $titleTableIdx + 1;
+        if (!isset($allTables[0][$contentTableIdx])) return $xml;
+
+        $contentTable  = $allTables[0][$contentTableIdx][0];
+        $contentOffset = $allTables[0][$contentTableIdx][1];
+
+        // Generar XML del contenido
+        $contentXml = $this->textToParaXml($content);
+
+        // Inyectar en la primera celda de la tabla-contenido
+        $newTable = preg_replace(
+            '~(<w:tc\b[^>]*>(?:\s*<w:tcPr>.*?</w:tcPr>)?).*?(</w:tc>)~s',
+            '$1' . $contentXml . '$2',
+            $contentTable,
+            1
+        );
+
+        return substr_replace($xml, $newTable, $contentOffset, strlen($contentTable));
+    }
+
+    /**
+     * Rellena la tabla de idiomas de Ricoh.
+     * Estructura: Row 0: [vacio|Hablado|Escrito|Leído], Row 1: [Español|...|...|...], Row 2: [Inglés|...|...|...]
+     * Busca filas con "Español"/"Inglés" y rellena las celdas de nivel.
+     */
+    private function applyRicohIdiomasTable(string $xml): string
+    {
+        $idiomas = $this->cv['idiomas'] ?? [];
+        if (empty($idiomas)) return $xml;
+
+        // Construir mapa: nombre idioma → niveles
+        $idiomaMap = [];
+        foreach ($idiomas as $idioma) {
+            $nombre = mb_strtolower(trim($idioma['idioma'] ?? ''), 'UTF-8');
+            $nivel  = trim($idioma['nivel_general'] ?? '');
+            if (empty($nombre) || empty($nivel)) continue;
+            $idiomaMap[$nombre] = [
+                'hablado' => trim($idioma['expresion_oral'] ?? '') ?: $nivel,
+                'escrito' => trim($idioma['escritura'] ?? '') ?: $nivel,
+                'leido'   => trim($idioma['lectura'] ?? '') ?: $nivel,
+            ];
+        }
+
+        // Buscar filas de la tabla que contengan "Español" o "Inglés" y rellenar
+        preg_match_all('/<w:tr\b[^>]*>((?:(?!<\/w:tr>).)*?)<\/w:tr>/s', $xml, $rowMatches, PREG_OFFSET_CAPTURE);
+
+        // Procesar de atrás hacia adelante para no romper offsets
+        for ($idx = count($rowMatches[0]) - 1; $idx >= 0; $idx--) {
+            $rowXml    = $rowMatches[0][$idx][0];
+            $rowOffset = $rowMatches[0][$idx][1];
+
+            // Extraer texto de la primera celda para ver si es un idioma
+            preg_match_all('/(<w:tc\b[^>]*>(?:(?!<\/w:tc>).)*?<\/w:tc>)/s', $rowXml, $cells);
+            if (count($cells[1]) < 4) continue;
+
+            preg_match_all('/<w:t[^>]*>([^<]*)<\/w:t>/', $cells[1][0], $ct);
+            $cellText = mb_strtolower(trim(implode('', $ct[1])), 'UTF-8');
+
+            // Buscar en nuestro mapa de idiomas
+            $match = null;
+            foreach ($idiomaMap as $nombre => $niveles) {
+                if (stripos($cellText, $nombre) !== false || stripos($nombre, $cellText) !== false) {
+                    $match = $niveles;
+                    break;
+                }
+            }
+
+            if (!$match) continue;
+
+            // Rellenar celdas 1, 2, 3 (Hablado, Escrito, Leído)
+            $values = [
+                1 => htmlspecialchars($match['hablado'], ENT_XML1, 'UTF-8'),
+                2 => htmlspecialchars($match['escrito'], ENT_XML1, 'UTF-8'),
+                3 => htmlspecialchars($match['leido'], ENT_XML1, 'UTF-8'),
+            ];
+
+            $newRow = $rowXml;
+            foreach ($values as $i => $val) {
+                if (isset($cells[1][$i])) {
+                    $newCell = $this->injectInCell($cells[1][$i], $val);
+                    $newRow  = str_replace($cells[1][$i], $newCell, $newRow);
+                }
+            }
+
+            $xml = substr_replace($xml, $newRow, $rowOffset, strlen($rowXml));
+        }
+
+        return $xml;
+    }
+
+    /**
+     * Variante de applySectionContent que SOLO busca el título en párrafos
+     * que NO están dentro de tablas. Evita confundir labels de tabla
+     * (ej: "Idiomas" en el cuadro de control) con títulos de sección reales.
+     */
+    private function applySectionContentOutsideTable(string $xml, string $sectionTitle, string $content): string
+    {
+        if (empty($sectionTitle) || empty($content)) return $xml;
+
+        $normalize = [$this, 'normalizeForMatch'];
+
+        $titleNorm = $normalize($sectionTitle);
+
+        // Obtener rangos de tablas para excluir
+        preg_match_all('~<w:tbl\b[^>]*>.*?</w:tbl>~s', $xml, $tblMatches, PREG_OFFSET_CAPTURE);
+        $tableRanges = [];
+        foreach ($tblMatches[0] as $tm) {
+            $tableRanges[] = [$tm[1], $tm[1] + strlen($tm[0])];
+        }
+
+        // Buscar el párrafo de título SOLO fuera de tablas
+        $headingEnd = -1;
+        $offset = 0;
+        while (preg_match('~<w:p\b[^>]*>.*?</w:p>~s', $xml, $pm, PREG_OFFSET_CAPTURE, $offset)) {
+            $paraXml = $pm[0][0];
+            $paraOff = $pm[0][1];
+
+            // Saltar párrafos dentro de tablas
+            $inTable = false;
+            foreach ($tableRanges as [$tStart, $tEnd]) {
+                if ($paraOff >= $tStart && $paraOff < $tEnd) { $inTable = true; break; }
+            }
+            if ($inTable) { $offset = $paraOff + strlen($paraXml); continue; }
+
+            preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $paraXml, $pt);
+            $paraTextNorm = $normalize(implode('', $pt[1]));
+
+            if ($paraTextNorm === $titleNorm) {
+                $headingEnd = $paraOff + strlen($paraXml);
+                break;
+            }
+            $offset = $paraOff + strlen($paraXml);
+        }
+
+        if ($headingEnd === -1) {
+            // Fallback: usar applySectionContent normal si no se encontró fuera de tabla
+            return $this->applySectionContent($xml, $sectionTitle, $content);
+        }
+
+        // Desde headingEnd, buscar hasta el siguiente título de sección o fin del body
+        $sectionTitles = array_map($normalize, [
+            'EXPERIENCIA LABORAL', 'EXPERIENCIA PROFESIONAL',
+            'TRAYECTORIA PROFESIONAL', 'TRAYECTORIA',
+            'FORMACION ACADEMICA', 'FORMACION COMPLEMENTARIA',
+            'FORMACION', 'CONOCIMIENTOS TECNICOS', 'COMPETENCIAS TECNICAS',
+            'IDIOMAS', 'CERTIFICACIONES', 'DATOS PERSONALES',
+            'PERFIL PROFESIONAL', 'SOFT SKILLS',
+            'PROTECCION DE DATOS PERSONALES',
+            'SUMMARY', 'TECHNICAL SKILLS', 'EXPERIENCE', 'TRAINING', 'EDUCATION',
+        ]);
+
+        $afterHeading = substr($xml, $headingEnd);
+        $nextSectionStart = strlen($afterHeading);
+        $lastParaEnd = 0;
+        $searchOffset = 0;
+
+        while (preg_match('~<w:p\b[^>]*>.*?</w:p>~s', $afterHeading, $nm, PREG_OFFSET_CAPTURE, $searchOffset)) {
+            $paraXml = $nm[0][0];
+            $paraOff = $nm[0][1];
+
+            // Saltar párrafos en tablas
+            $globalOff = $headingEnd + $paraOff;
+            $inTable = false;
+            foreach ($tableRanges as [$tStart, $tEnd]) {
+                if ($globalOff >= $tStart && $globalOff < $tEnd) { $inTable = true; break; }
+            }
+            if ($inTable) { $searchOffset = $paraOff + strlen($paraXml); continue; }
+
+            preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $paraXml, $pt);
+            $paraText = $normalize(implode('', $pt[1]));
+
+            foreach ($sectionTitles as $kt) {
+                if ($kt !== $titleNorm && $paraText === $kt) {
+                    $nextSectionStart = $paraOff;
+                    goto idiomasFound;
+                }
+            }
+
+            $lastParaEnd = $paraOff + strlen($paraXml);
+            $searchOffset = $lastParaEnd;
+        }
+        $nextSectionStart = $lastParaEnd;
+        idiomasFound:
+
+        $contentXml = $this->textToParaXml($content);
+        return substr($xml, 0, $headingEnd) . $contentXml . substr($xml, $headingEnd + $nextSectionStart);
     }
 
     // =========================================================================
     // PASO 2E: Campos específicos de Avanade (página 2 - Summary)
     // =========================================================================
 
+    /**
+     * Avanade Summary: Claude ya rellena los párrafos simples (Nombre, Madrid,
+     * Nivel de inglés, Disponibilidad...) via full_paragraph / paragraph_with_label.
+     * PHP solo interviene como fallback si Claude no rellenó algo.
+     */
     private function applyAvanadeSummaryFields(string $xml): string
     {
         $dp = $this->cv['datos_personales'] ?? [];
         $idiomas = $this->cv['idiomas'] ?? [];
 
-        // "Nombre" → reemplazar texto completo del párrafo
+        // "Nombre" → solo reemplazar si el párrafo todavía dice literalmente "Nombre"
         $nombre = trim($dp['nombre_completo'] ?? '');
         if ($nombre) {
             $xml = $this->replaceParaText($xml, 'Nombre', $nombre);
         }
 
-        // "Madrid" → reemplazar con residencia
+        // "Madrid" → solo reemplazar si el párrafo todavía dice literalmente "Madrid"
+        // Si Claude ya lo reemplazó, replaceParaText no encontrará "Madrid" y no hará nada
         $residencia = trim($dp['residencia'] ?? '');
         if ($residencia) {
             $xml = $this->replaceParaText($xml, 'Madrid', $residencia);
         }
 
-        // Nivel de inglés: buscar idioma inglés y añadir nivel
-        $nivelIngles = '';
-        foreach ($idiomas as $idioma) {
-            $name = mb_strtolower(trim($idioma['idioma'] ?? ''), 'UTF-8');
-            if (in_array($name, ['inglés', 'ingles', 'english'])) {
-                $nivelIngles = trim($idioma['nivel_general'] ?? '');
-                break;
-            }
-        }
-        if ($nivelIngles) {
-            $xml = $this->appendToParaByText($xml, 'ngl', $nivelIngles);
-        }
-
-        // Disponibilidad entrevista
-        $dispEntrev = trim($dp['disponibilidad_entrevista'] ?? '');
-        if ($dispEntrev) {
-            $xml = $this->appendToParaByText($xml, 'Disponibilidad entrevista', $dispEntrev);
-        }
-
-        // Disponibilidad incorporación
-        $dispIncorp = trim($dp['disponibilidad_incorporacion'] ?? '');
-        if ($dispIncorp) {
-            $xml = $this->appendToParaByText($xml, 'Disponibilidad incorporaci', $dispIncorp);
-        }
+        // Nivel de inglés, disponibilidad: Claude se encarga vía full_paragraph.
+        // No hacemos append aquí para evitar duplicaciones.
 
         return $xml;
     }
@@ -533,10 +1059,24 @@ SYSTEM;
 
     private function applySubstitutions(string $xml, array $substitutions): string
     {
+        // Labels que PHP gestiona — bloquear cualquier sustitución de Claude sobre ellos
+        $blockedLabels = [
+            'entornos', 'conocimientos', 'competencias', 'idiomas',
+            'experiencia', 'formación', 'formacion', 'trayectoria',
+        ];
+
         foreach ($substitutions as $sub) {
             $type  = $sub['type']  ?? '';
             $value = trim($sub['value'] ?? '');
             if ($value === '') continue;
+
+            // Filtrar sustituciones sobre secciones gestionadas por PHP
+            $label = mb_strtolower($sub['label'] ?? $sub['original'] ?? $sub['section_title'] ?? '', 'UTF-8');
+            $blocked = false;
+            foreach ($blockedLabels as $bl) {
+                if (str_contains($label, $bl)) { $blocked = true; break; }
+            }
+            if ($blocked) continue;
 
             $before  = $xml;
             switch ($type) {
@@ -617,11 +1157,34 @@ SYSTEM;
         return $xml;
     }
 
+    /**
+     * Normaliza texto para comparación: quita tildes, mayúsculas, colapsa espacios,
+     * normaliza barras (quita espacios alrededor de /).
+     */
+    private function normalizeForMatch(string $s): string
+    {
+        $s = mb_strtoupper($s, 'UTF-8');
+        $s = str_replace(
+            ['Á','É','Í','Ó','Ú','Ü','Ñ'],
+            ['A','E','I','O','U','U','N'],
+            $s
+        );
+        // Normalizar barras: "ENTORNOS / CONOCIMIENTOS" → "ENTORNOS/CONOCIMIENTOS"
+        $s = preg_replace('/\s*\/\s*/', '/', $s);
+        return preg_replace('/\s+/', ' ', trim($s));
+    }
+
     private function cleanResidualPlaceholders(string $xml): string
     {
         $xml = preg_replace('/(<w:t[^>]*>)texto,\s*texto(<\/w:t>)/iu', '$1$2', $xml);
         $xml = preg_replace('/(<w:t[^>]*>)texto(<\/w:t>)/iu',           '$1$2', $xml);
         $xml = preg_replace('/(<w:t[^>]*>)\xc2\xa0(<\/w:t>)/u',         '$1$2', $xml);
+        // Limpiar placeholders de formación complementaria vacía
+        $xml = preg_replace('/(<w:t[^>]*>)Fecha(<\/w:t>)/u',            '$1$2', $xml);
+        $xml = preg_replace('/(<w:t[^>]*>)Horas(<\/w:t>)/u',            '$1$2', $xml);
+        $xml = preg_replace('/(<w:t[^>]*>)Informaci[óo]n(<\/w:t>)/iu',  '$1$2', $xml);
+        $xml = preg_replace('/(<w:t[^>]*>)cursos(<\/w:t>)/iu',          '$1$2', $xml);
+        $xml = preg_replace('/(<w:t[^>]*>)Madrid(<\/w:t>)/u',           '$1$2', $xml);
         return $xml;
     }
 
@@ -740,20 +1303,11 @@ SYSTEM;
      * Se busca el párrafo cuyo texto VISIBLE CONCATENADO coincida con el título buscado,
      * comparando texto normalizado (sin tildes, mayúsculas) para evitar fallos de encoding.
      */
-    private function applySectionContent(string $xml, string $sectionTitle, string $content): string
+    private function applySectionContent(string $xml, string $sectionTitle, string $content, bool $forceBold = false): string
     {
         if (empty($sectionTitle) || empty($content)) return $xml;
 
-        // Normaliza: quita tildes, mayúsculas, colapsa espacios
-        $normalize = function(string $s): string {
-            $s = mb_strtoupper($s, 'UTF-8');
-            $s = str_replace(
-                ['Á','É','Í','Ó','Ú','Ü','Ñ'],
-                ['A','E','I','O','U','U','N'],
-                $s
-            );
-            return preg_replace('/\s+/', ' ', trim($s));
-        };
+        $normalize = [$this, 'normalizeForMatch'];
 
         $titleNorm = $normalize($sectionTitle);
 
@@ -851,8 +1405,84 @@ SYSTEM;
         $nextSectionStart = $lastParaEnd;
         found:
 
-        $contentXml = $this->textToParaXml($content);
+        $contentXml = $this->textToParaXml($content, $forceBold);
         return substr($xml, 0, $headingEnd) . $contentXml . substr($xml, $headingEnd + $nextSectionStart);
+    }
+
+    /**
+     * Variante de applySectionContent para plantillas donde el título está en una
+     * tabla-header y el contenido debe ir DENTRO de una tabla-contenido posterior.
+     * Patrón: [tabla con título] → [párrafos vacíos opcionales] → [tabla contenido] → [siguiente sección]
+     * En vez de reemplazar la tabla-contenido con párrafos sueltos, inyecta el contenido
+     * dentro de la primera celda de esa tabla.
+     */
+    private function applySectionContentIntoTable(string $xml, string $sectionTitle, string $content): string
+    {
+        if (empty($sectionTitle) || empty($content)) return $xml;
+
+        $normalize = [$this, 'normalizeForMatch'];
+
+        $titleNorm = $normalize($sectionTitle);
+
+        // Buscar el párrafo del título
+        $headingEnd = -1;
+        $offset = 0;
+        while (preg_match('~<w:p\b[^>]*>.*?</w:p>~s', $xml, $pm, PREG_OFFSET_CAPTURE, $offset)) {
+            $paraXml = $pm[0][0];
+            $paraOff = $pm[0][1];
+            preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $paraXml, $pt);
+            $paraTextNorm = $normalize(implode('', $pt[1]));
+            if ($paraTextNorm === $titleNorm) {
+                $headingEnd = $paraOff + strlen($paraXml);
+                break;
+            }
+            $offset = $paraOff + strlen($paraXml);
+        }
+
+        if ($headingEnd === -1) return $xml;
+
+        // Si el heading está dentro de una tabla, avanzar headingEnd hasta después de </w:tbl>
+        $beforeHeading = substr($xml, 0, $headingEnd);
+        $openTbls  = preg_match_all('/<w:tbl[\s>]/', $beforeHeading);
+        $closeTbls = substr_count($beforeHeading, '</w:tbl>');
+        if ($openTbls > $closeTbls) {
+            $tblClosePos = strpos($xml, '</w:tbl>', $headingEnd);
+            if ($tblClosePos !== false) {
+                $headingEnd = $tblClosePos + strlen('</w:tbl>');
+            }
+        }
+
+        // Buscar la tabla-contenido después del heading
+        $afterHeading = substr($xml, $headingEnd);
+
+        // Buscar la próxima tabla (saltando párrafos vacíos opcionales)
+        if (!preg_match('~^((?:\s*<w:p\b[^>]*>.*?</w:p>\s*)*?)\s*(<w:tbl\b[^>]*>.*?</w:tbl>)~s', $afterHeading, $tblMatch)) {
+            // No hay tabla-contenido — fallback a applySectionContent normal
+            return $this->applySectionContent($xml, $sectionTitle, $content);
+        }
+
+        $beforeTable  = $tblMatch[1];
+        $contentTable = $tblMatch[2];
+
+        // Generar el XML del contenido
+        $contentXml = $this->textToParaXml($content);
+
+        // Inyectar en la primera celda de la tabla-contenido
+        // Preservar las propiedades de la celda (tcPr) pero reemplazar el contenido
+        $newTable = preg_replace(
+            '~(<w:tc\b[^>]*>(?:\s*<w:tcPr>.*?</w:tcPr>)?).*?(</w:tc>)~s',
+            '$1' . $contentXml . '$2',
+            $contentTable,
+            1
+        );
+
+        $tableOffset = strlen($beforeTable);
+        $tableEnd    = $tableOffset + strlen($contentTable);
+
+        return substr($xml, 0, $headingEnd)
+             . $beforeTable
+             . $newTable
+             . substr($afterHeading, $tableEnd);
     }
 
     private function injectInCell(string $cell, string $valueEsc): string
@@ -881,34 +1511,105 @@ SYSTEM;
     /**
      * Convierte texto multilínea a párrafos OOXML.
      * Negrita para: fechas (06/2024), etiquetas (Funciones:, Entorno:…), texto TODO MAYÚSCULAS.
+     * Líneas "Entorno: ..." → label "Entorno:" en negrita + skills en negrita.
+     * Líneas de funciones (texto libre tras "Funciones:") → sin negrita.
      */
-    private function textToParaXml(string $text): string
+    private function textToParaXml(string $text, bool $forceBold = false): string
     {
+        // Determinar fuente según plantilla
+        $fontXml = '';
+        $fontMap = [
+            'avanade'   => 'Times New Roman',
+            'arelance'  => 'Myriad Pro',
+            'accenture' => 'Myriad Pro',
+        ];
+        if (isset($fontMap[$this->templateKey])) {
+            $font = $fontMap[$this->templateKey];
+            $fontXml = '<w:rFonts w:ascii="' . $font . '" w:hAnsi="' . $font . '"/>';
+        }
+
         $lines = explode("\n", $text);
         $xml   = '';
+        $afterFunciones = false; // Indica si la línea anterior fue "Funciones:"
 
         foreach ($lines as $line) {
             $line = trim($line);
 
             if ($line === '') {
                 $xml .= '<w:p><w:pPr><w:spacing w:before="60" w:after="60"/></w:pPr></w:p>';
+                $afterFunciones = false;
                 continue;
             }
 
+            // Detectar bullets (• o -) para aplicar indentación
+            $isBullet = (bool) preg_match('/^[•\-]\s/', $line);
+            $indent = $isBullet
+                ? '<w:ind w:left="360" w:hanging="180"/>'
+                : '';
+
+            // Detectar si esta línea es texto de funciones (justo después de "Funciones:")
+            $isFunctionText = $afterFunciones && !preg_match('/^(Entorno:|Cliente:|Funciones:|\d{2}\/\d{4}|\d{4})/', $line);
+
+            // Resetear flag
+            $afterFunciones = ($line === 'Funciones:');
+
             $esc    = htmlspecialchars($line, ENT_XML1, 'UTF-8');
-            $isBold = (bool) preg_match(
-                '/^(?:\d{2}\/\d{4}|\d{4}|Empresa:|Cargo:|Cliente:|Funciones:|Entorno:|Horas:|Categoría:|[A-ZÁÉÍÓÚÑ\s]{4,}$)/',
+
+            // Labels que van completamente en negrita (label + contenido)
+            $isFullBold = (bool) preg_match(
+                '/^(?:\d{2}\/\d{4}|\d{4}|Entorno:|Herramientas:|[A-ZÁÉÍÓÚÑ\s]{4,}$)/',
                 $line
             );
 
-            $rpr = $isBold
-                ? '<w:rPr><w:b/><w:sz w:val="20"/></w:rPr>'
-                : '<w:rPr><w:sz w:val="20"/></w:rPr>';
+            // Labels donde solo el label es negrita, pero el contenido no
+            $isSplitLabel = (bool) preg_match(
+                '/^(Empresa:|Cargo:|Cliente:|Rol:|Rol\/Categoría:|Título de posición:|Funciones:|Horas:|Categoría:)\s+.+/',
+                $line
+            );
 
-            $xml .= '<w:p>'
-                  . '<w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>'
-                  . '<w:r>' . $rpr . '<w:t xml:space="preserve">' . $esc . '</w:t></w:r>'
-                  . '</w:p>';
+            // Labels standalone sin contenido (ej: "Funciones:" sola) → negrita
+            $isStandaloneLabel = (bool) preg_match(
+                '/^(Empresa:|Cargo:|Cliente:|Rol:|Rol\/Categoría:|Título de posición:|Funciones:|Horas:|Categoría:)$/',
+                $line
+            );
+
+            // Los bullets no son negrita (son contenido de funciones)
+            if ($isBullet) { $isFullBold = false; $isSplitLabel = false; }
+
+            // El texto descriptivo de funciones NO es negrita
+            if ($isFunctionText) { $isFullBold = false; $isSplitLabel = false; }
+
+            // Líneas de idiomas (ej: "Inglés: Avanzado") → no negrita
+            if (preg_match('/^(Inglés|Español|Francés|Alemán|Portugués|Italiano|Catalán|Valenciano|Euskera|Gallego|English|Spanish|French|German|Chino|Japonés|Árabe|Ruso):/iu', $line)) {
+                $isFullBold = false;
+                $isSplitLabel = false;
+            }
+
+            // Si se fuerza negrita (ej: conocimientos técnicos), aplicar siempre a toda la línea
+            if ($forceBold) { $isFullBold = true; $isSplitLabel = false; }
+
+            $rprBold   = '<w:rPr>' . $fontXml . '<w:b/><w:sz w:val="20"/></w:rPr>';
+            $rprNormal = '<w:rPr>' . $fontXml . '<w:sz w:val="20"/></w:rPr>';
+
+            if ($isSplitLabel && preg_match('/^([^:]+:\s*)(.+)$/', $line, $parts)) {
+                // Dos runs: label en negrita + contenido normal
+                $labelEsc   = htmlspecialchars($parts[1], ENT_XML1, 'UTF-8');
+                $contentEsc = htmlspecialchars($parts[2], ENT_XML1, 'UTF-8');
+                $xml .= '<w:p>'
+                      . '<w:pPr><w:spacing w:before="0" w:after="40"/>' . $indent . '</w:pPr>'
+                      . '<w:r>' . $rprBold . '<w:t xml:space="preserve">' . $labelEsc . '</w:t></w:r>'
+                      . '<w:r>' . $rprNormal . '<w:t xml:space="preserve">' . $contentEsc . '</w:t></w:r>'
+                      . '</w:p>';
+            } else {
+                // Un solo run: todo negrita o todo normal
+                $rpr = ($isFullBold || $isStandaloneLabel)
+                    ? $rprBold
+                    : $rprNormal;
+                $xml .= '<w:p>'
+                      . '<w:pPr><w:spacing w:before="0" w:after="40"/>' . $indent . '</w:pPr>'
+                      . '<w:r>' . $rpr . '<w:t xml:space="preserve">' . $esc . '</w:t></w:r>'
+                      . '</w:p>';
+            }
         }
 
         return $xml;
@@ -985,7 +1686,7 @@ SYSTEM;
     private function saveLog(array $substitutions): void
     {
         $lines   = [];
-        $lines[] = '=== CV Converter v11 - Log de sustituciones ===';
+        $lines[] = '=== CV Converter v13 - Log de sustituciones ===';
         $lines[] = 'Fecha: ' . date('Y-m-d H:i:s');
         $lines[] = 'Plantilla: ' . $this->templateKey;
         $lines[] = 'Candidato: ' . ($this->cv['datos_personales']['nombre_completo'] ?? '?');

@@ -6,7 +6,10 @@
       "Bash(/c/xampp99/php/php.exe -l \"C:/xampp99/htdocs/cv-converter/lib/TemplateFiller.php\")",
       "Bash(wc -l /c/xampp99/htdocs/cv-converter/lib/*.php)",
       "Bash(/c/xampp99/php/php.exe -l index.php)",
-      "Bash(/c/xampp99/php/php.exe -l historial.php)"
+      "Bash(/c/xampp99/php/php.exe -l historial.php)",
+      "Bash(unzip -p templates/Atos*.docx word/document.xml)",
+      "Bash(/c/xampp99/php/php.exe -r \":*)",
+      "Bash(/c/xampp99/php/php.exe -r \"\n\\\\$z = new ZipArchive\\(\\);\n\\\\$z->open\\('C:/xampp99/htdocs/cv-converter/templates/Avanade.docx'\\);\n\\\\$xml = \\\\$z->getFromName\\('word/document.xml'\\);\n\\\\$z->close\\(\\);\n// Show first few rPr to see what font the template uses\npreg_match_all\\('/<w:rFonts[^>]*>/', \\\\$xml, \\\\$m\\);\n\\\\$unique = array_unique\\(\\\\$m[0]\\);\nforeach \\(\\\\$unique as \\\\$f\\) echo \\\\$f . PHP_EOL;\n\")"
     ]
   }
 }

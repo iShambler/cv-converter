@@ -93,6 +93,8 @@ CAMPO "funciones" de experiencia:
 CAMPO "entorno_tecnologico":
 - Incluye herramientas, tecnologías y software mencionados en esa experiencia concreta.
 - Para perfiles NO tecnológicos (audiovisual, diseño, marketing...) incluye igualmente el software específico (Adobe Premiere, etc.).
+- IMPORTANTE: las habilidades/skills deben ir SEPARADAS POR COMAS. Ejemplo: "Adobe Premiere Pro, Adobe After Effects, Diseño gráfico, Fotografía"
+- Si en el CV original están como lista o separadas por espacios, ponlas separadas por comas.
 
 CAMPO "conocimientos_tecnicos":
 - Para perfiles IT: lenguajes, frameworks, BBDDs, cloud, SO.

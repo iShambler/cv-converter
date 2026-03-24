@@ -86,10 +86,12 @@ try {
     }
 
     // Respuesta
+    $downloadName = $filler->getDownloadName();
     echo json_encode([
         'success' => true,
         'filename' => $outputFilename,
-        'download_url' => 'output/' . $outputFilename,
+        'download_name' => $downloadName,
+        'download_url' => 'download.php?file=' . urlencode($outputFilename) . '&name=' . urlencode($downloadName),
         'parsed_data' => $parsedData,
         'mode' => $isDirectFile ? 'direct_file' : 'text_extraction',
     ]);

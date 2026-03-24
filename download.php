@@ -45,8 +45,16 @@ $mimeTypes = [
     'txt'  => 'text/plain; charset=utf-8',
 ];
 
+// Nombre de descarga: si se pasa ?name=..., usarlo; si no, usar el nombre del archivo
+$downloadName = basename($_GET['name'] ?? $file);
+// Sanitizar: solo permitir caracteres seguros en el nombre
+$downloadName = preg_replace('/[^\w\s\-áéíóúñÁÉÍÓÚÑ\.]/u', '', $downloadName);
+if (empty($downloadName) || !str_ends_with(strtolower($downloadName), '.docx')) {
+    $downloadName = $file;
+}
+
 header('Content-Type: ' . ($mimeTypes[$ext] ?? 'application/octet-stream'));
-header('Content-Disposition: attachment; filename="' . $file . '"');
+header('Content-Disposition: attachment; filename="' . $downloadName . '"');
 header('Content-Length: ' . filesize($filePath));
 header('Cache-Control: no-store, no-cache, must-revalidate');
 header('Pragma: no-cache');
