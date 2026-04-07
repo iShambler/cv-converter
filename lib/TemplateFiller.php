@@ -87,6 +87,11 @@ class TemplateFiller
             $xml = $this->applyAvanadeSummaryFields($xml);
         }
 
+        // PASO 2F: Limpieza específica Ricoh — celda "Datos personales:" sin placeholder
+        if ($this->templateKey === 'ricoh') {
+            $xml = $this->cleanRicohDatosPersonales($xml);
+        }
+
         // PASO 3: Limpiar placeholders residuales
         $xml = $this->cleanResidualPlaceholders($xml);
 
@@ -223,6 +228,11 @@ PROHIBICIONES ABSOLUTAS:
 - SÍ RELLENAR: En tablas del cuadro de control (Accenture/Arelance), si hay una fila de Idiomas con columna "Nivel", rellena el nivel del idioma (ej: "Avanzado", "B2", etc.) usando cell_after_label. También rellena "Experiencia" en tecnología principal si hay datos.
 - IMPORTANTE: El campo "Experiencia (meses/años) en tecnología principal" debe rellenarse con exp_total. NO ponerlo en "otras tecnologías". El label para cell_after_label es "Experiencia (meses/años) en tecnología principal".
 
+REGLAS CRÍTICAS PARA RICOH (cabecera y datos personales):
+- "Datos personales" o "Datos personales:" es ÚNICAMENTE el título de una cabecera de sección que ya tiene su formato y su contenido en la plantilla. NO TOQUES esa celda bajo ningún concepto. PROHIBIDO generar cualquier sustitución (cell_after_label, paragraph_with_label, full_paragraph) que tenga "Datos personales" en label, original o cualquier campo. Debe quedar literalmente "Datos personales:" sin modificación alguna.
+- El nombre del candidato va exclusivamente en el label "Nombre" (usa cell_after_label con label="Nombre"). Si en la plantilla NO existe un label "Nombre" separado, NO inventes uno y NO pongas el nombre en otro sitio que se le parezca.
+- En la cabecera superior tipo "Nombre puesto - ESPOR00" (o similar): la palabra "Nombre" es un PLACEHOLDER que debes SUSTITUIR por el nombre completo del candidato dentro del mismo párrafo, manteniendo el resto del texto intacto. Usa "full_paragraph" con original="Nombre puesto - ESPOR00" y value="[Nombre del candidato] puesto - ESPOR00" (preservando exactamente el resto del texto del párrafo original). NUNCA añadas el nombre AL FINAL del párrafo ni después del código ESPOR00 — debe REEMPLAZAR la palabra "Nombre" en su posición original. Esta regla es SOLO para el párrafo de cabecera "Nombre puesto", NO para "Datos personales".
+
 Responde SOLO con JSON válido. Sin markdown. Sin comentarios.
 {"substitutions": [...]}
 SYSTEM;
@@ -266,13 +276,29 @@ SYSTEM;
             $fechaStr   = $inicio . ($fin ? ' - ' . $fin : '');
             $cargoFinal = $cargo ?: $cat;
 
+            // Solo Ricoh conserva los markers **...** de palabras clave en funciones
+            if ($tpl !== 'ricoh') {
+                $func = $this->stripBoldMarkers($func);
+            }
+
             if ($tpl === 'atos') {
-                // Atos: líneas separadas — Fecha / Empresa / Cargo / Funciones: texto inline / Entorno:
-                if ($fechaStr)   $lines[] = $fechaStr;
-                if ($empresa)    $lines[] = $empresa;
-                if ($cargoFinal) $lines[] = $cargoFinal;
-                if ($func)       $lines[] = 'Funciones: ' . $func;
-                if ($entorno)    $lines[] = 'Entorno: ' . $this->normalizeEntornoCommas($entorno);
+                // Atos: fecha+empresa+cargo en una línea, funciones con bullets, Tecnologías:
+                $fechaIni = $this->fechaExpToSpanishText($inicio);
+                $fechaFin = $fin ? $this->fechaExpToSpanishText($fin) : '';
+                $fechaDisplay = $fechaIni . ($fechaFin ? ' – ' . $fechaFin : '');
+
+                $headerParts = array_filter([$fechaDisplay, $empresa, $cargoFinal]);
+                if (!empty($headerParts)) $lines[] = implode('/ ', $headerParts);
+
+                if ($func) {
+                    $lines[] = '';
+                    $bullets = $this->splitFuncionesIntoBullets($func);
+                    foreach ($bullets as $b) $lines[] = '• ' . $b;
+                }
+                if ($entorno) {
+                    $lines[] = '';
+                    $lines[] = 'Tecnologías: ' . $this->normalizeEntornoCommas($entorno);
+                }
             } elseif ($tpl === 'inetum') {
                 // Inetum: líneas separadas, funciones con guiones
                 if ($fechaStr)   $lines[] = $fechaStr;
@@ -286,31 +312,54 @@ SYSTEM;
                     foreach ($bullets as $b) $lines[] = '- ' . $b;
                 }
             } elseif ($tpl === 'ricoh') {
-                // Ricoh: labels explícitos negrita, funciones con bullets, entorno negrita
-                if ($fechaStr)   $lines[] = $fechaStr;
-                if ($empresa)    $lines[] = 'Empresa: ' . $empresa;
-                if ($cargoFinal) $lines[] = 'Título de posición: ' . $cargoFinal;
+                // Ricoh: fechas con mes escrito, sin labels, empresa y rol negrita, bullets con keywords negrita
+                $fechaIni = $this->fechaExpToSpanishText($inicio);
+                $fechaFin = $fin ? $this->fechaExpToSpanishText($fin) : '';
+                $fechaDisplay = $fechaIni . ($fechaFin ? ' – ' . $fechaFin : '');
+
+                if ($fechaDisplay) $lines[] = $fechaDisplay;
+                if ($empresa)      $lines[] = '[BOLD]' . $this->toTitleCase($empresa);
+                if ($cargoFinal)   $lines[] = '[BOLD]' . $this->toTitleCase($cargoFinal);
+                if ($func) {
+                    $lines[] = 'Funciones:';
+                    $lines[] = '';
+                    $bullets = $this->splitFuncionesIntoBullets($func);
+                    foreach ($bullets as $b) $lines[] = '• ' . $b;
+                }
+            } elseif ($tpl === 'avanade') {
+                // Avanade: fechas con mes escrito, sin labels, rol en negrita, bullets
+                $fechaIni = $this->fechaExpToSpanishText($inicio);
+                $fechaFin = $fin ? $this->fechaExpToSpanishText($fin) : '';
+                $fechaDisplay = $fechaIni . ($fechaFin ? ' – ' . $fechaFin : '');
+
+                if ($fechaDisplay) $lines[] = $fechaDisplay;
+                if ($empresa)      $lines[] = '[BOLD]' . $this->toTitleCase($empresa);
+                if ($cargoFinal)   $lines[] = '[BOLD]' . $this->toTitleCase($cargoFinal);
+                if ($func) {
+                    $lines[] = 'Funciones:';
+                    $bullets = $this->splitFuncionesIntoBullets($func);
+                    foreach ($bullets as $b) $lines[] = '• ' . $b;
+                }
+                if ($entorno) {
+                    $lines[] = 'Herramientas: ' . $this->normalizeEntornoCommas($entorno);
+                }
+            } elseif (in_array($tpl, ['accenture', 'arelance'])) {
+                // Accenture/Arelance: fechas con mes escrito, sin labels, rol en azul, bullets
+                $fechaIni = $this->fechaExpToSpanishText($inicio);
+                $fechaFin = $fin ? $this->fechaExpToSpanishText($fin) : '';
+                $fechaDisplay = $fechaIni . ($fechaFin ? ' – ' . $fechaFin : '');
+
+                if ($fechaDisplay) $lines[] = $fechaDisplay;
+                if ($empresa)      $lines[] = '[BOLD]' . $this->toTitleCase($empresa);
+                if ($cargoFinal)   $lines[] = '[ROLE_BLUE]' . $this->toTitleCase($cargoFinal);
                 if ($func) {
                     $lines[] = 'Funciones:';
                     $bullets = $this->splitFuncionesIntoBullets($func);
                     foreach ($bullets as $b) $lines[] = '• ' . $b;
                 }
                 if ($entorno) $lines[] = 'Entorno: ' . $this->normalizeEntornoCommas($entorno);
-            } elseif ($tpl === 'avanade') {
-                // Avanade: labels explícitos + "Herramientas:" en vez de "Entorno:"
-                if ($fechaStr)   $lines[] = $fechaStr;
-                if ($empresa)    $lines[] = 'Empresa: ' . $empresa;
-                if ($cargoFinal) $lines[] = 'Rol: ' . $cargoFinal;
-                if ($cliente)    $lines[] = 'Cliente: ' . $cliente;
-                if ($func) {
-                    $lines[] = 'Funciones:';
-                    $lines[] = $func;
-                }
-                if ($entorno) {
-                    $lines[] = 'Herramientas: ' . $this->normalizeEntornoCommas($entorno);
-                }
             } else {
-                // Formato genérico (Arelance, Accenture, etc.)
+                // Formato genérico
                 if ($fechaStr)   $lines[] = $fechaStr;
                 if ($empresa)    $lines[] = 'Empresa: ' . $empresa;
                 if ($cargoFinal) $lines[] = 'Rol/Categoría: ' . $cargoFinal;
@@ -329,6 +378,9 @@ SYSTEM;
 
         // Quitar último separador vacío
         while (!empty($lines) && end($lines) === '') array_pop($lines);
+
+        // Avanade/Ricoh: añadir separación inicial tras la línea del título
+        if (in_array($tpl, ['avanade', 'ricoh'])) array_unshift($lines, '');
 
         $content = implode("\n", $lines);
         $xml = $this->applySectionContent($xml, 'EXPERIENCIA LABORAL', $content);
@@ -531,7 +583,7 @@ SYSTEM;
                 // Avanade: Technical Skills y Microsoft Specific Skill, ambos en negrita
                 // Separar Microsoft skills si existen
                 $msSkills = '';
-                $otherSkills = $sectionContent;
+                $otherSkills = "\n" . $sectionContent; // línea vacía inicial para separación del título
                 // Por ahora todo va a Technical Skills; Microsoft Specific se deja vacío si no hay datos específicos
                 $xml = $this->applySectionContent($xml, 'Technical Skills', $otherSkills, true);
                 if ($msSkills) {
@@ -823,6 +875,40 @@ SYSTEM;
     }
 
     /**
+     * Ricoh: la celda "Datos personales:" tiene un placeholder tipo "Nombre A.A"
+     * que debe quedar limpio. Encuentra cualquier párrafo que empiece por
+     * "Datos personales" y reemplaza todo el texto del párrafo por solo "Datos personales:".
+     */
+    private function cleanRicohDatosPersonales(string $xml): string
+    {
+        return preg_replace_callback(
+            '~<w:p\b[^>]*>.*?</w:p>~s',
+            function ($m) {
+                $paraXml = $m[0];
+                preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $paraXml, $pt);
+                $text = trim(implode('', $pt[1]));
+                if (stripos($text, 'datos personales') !== 0) return $paraXml;
+
+                // Reemplazar el texto de TODOS los <w:t> de este párrafo:
+                // dejar solo "Datos personales:" en el primero y vaciar el resto.
+                $first = true;
+                return preg_replace_callback(
+                    '~(<w:t[^>]*>)([^<]*)(</w:t>)~',
+                    function ($mt) use (&$first) {
+                        if ($first) {
+                            $first = false;
+                            return $mt[1] . 'Datos personales:' . $mt[3];
+                        }
+                        return $mt[1] . $mt[3];
+                    },
+                    $paraXml
+                );
+            },
+            $xml
+        ) ?? $xml;
+    }
+
+    /**
      * Variante de applySectionContent que SOLO busca el título en párrafos
      * que NO están dentro de tablas. Evita confundir labels de tabla
      * (ej: "Idiomas" en el cuadro de control) con títulos de sección reales.
@@ -1063,6 +1149,7 @@ SYSTEM;
         $blockedLabels = [
             'entornos', 'conocimientos', 'competencias', 'idiomas',
             'experiencia', 'formación', 'formacion', 'trayectoria',
+            'datos personales',
         ];
 
         foreach ($substitutions as $sub) {
@@ -1522,6 +1609,7 @@ SYSTEM;
             'avanade'   => 'Times New Roman',
             'arelance'  => 'Myriad Pro',
             'accenture' => 'Myriad Pro',
+            'ricoh'     => 'Calibri',
         ];
         if (isset($fontMap[$this->templateKey])) {
             $font = $fontMap[$this->templateKey];
@@ -1541,8 +1629,19 @@ SYSTEM;
                 continue;
             }
 
+            // Detectar y procesar markers de formato
+            $isBlueRole = false;
+            $isMarkerBold = false;
+            if (str_starts_with($line, '[ROLE_BLUE]')) {
+                $line = substr($line, strlen('[ROLE_BLUE]'));
+                $isBlueRole = true;
+            } elseif (str_starts_with($line, '[BOLD]')) {
+                $line = substr($line, strlen('[BOLD]'));
+                $isMarkerBold = true;
+            }
+
             // Detectar bullets (• o -) para aplicar indentación
-            $isBullet = (bool) preg_match('/^[•\-]\s/', $line);
+            $isBullet = (bool) preg_match('/^[•\-]\s/u', $line);
             $indent = $isBullet
                 ? '<w:ind w:left="360" w:hanging="180"/>'
                 : '';
@@ -1555,9 +1654,27 @@ SYSTEM;
 
             $esc    = htmlspecialchars($line, ENT_XML1, 'UTF-8');
 
+            // Renderizar rol en azul+negrita o empresa en negrita, y continuar
+            if ($isBlueRole) {
+                $rprBlue = '<w:rPr>' . $fontXml . '<w:b/><w:color w:val="0070C0"/><w:sz w:val="20"/></w:rPr>';
+                $xml .= '<w:p>'
+                      . '<w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>'
+                      . '<w:r>' . $rprBlue . '<w:t xml:space="preserve">' . $esc . '</w:t></w:r>'
+                      . '</w:p>';
+                continue;
+            }
+            if ($isMarkerBold) {
+                $rprBoldM = '<w:rPr>' . $fontXml . '<w:b/><w:sz w:val="20"/></w:rPr>';
+                $xml .= '<w:p>'
+                      . '<w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>'
+                      . '<w:r>' . $rprBoldM . '<w:t xml:space="preserve">' . $esc . '</w:t></w:r>'
+                      . '</w:p>';
+                continue;
+            }
+
             // Labels que van completamente en negrita (label + contenido)
             $isFullBold = (bool) preg_match(
-                '/^(?:\d{2}\/\d{4}|\d{4}|Entorno:|Herramientas:|[A-ZÁÉÍÓÚÑ\s]{4,}$)/',
+                '/^(?:\d{2}\/\d{4}|\d{4}|(?:Enero|Febrero|Marzo|Abril|Mayo|Junio|Julio|Agosto|Septiembre|Octubre|Noviembre|Diciembre)\s+\d{4}|Entorno:|Herramientas:|Tecnologías:|[A-ZÁÉÍÓÚÑ\s]{4,}$)/',
                 $line
             );
 
@@ -1572,6 +1689,19 @@ SYSTEM;
                 '/^(Empresa:|Cargo:|Cliente:|Rol:|Rol\/Categoría:|Título de posición:|Funciones:|Horas:|Categoría:)$/',
                 $line
             );
+
+            // Bullets con **keywords** en negrita: generar runs mixtos
+            if ($isBullet && str_contains($line, '**')) {
+                $bulletText = preg_replace('/^[•\-]\s/u', '', $line);
+                $runs = $this->buildBoldKeywordRuns($bulletText, $fontXml);
+                $xml .= '<w:p>'
+                      . '<w:pPr><w:spacing w:before="0" w:after="40"/>' . $indent . '</w:pPr>'
+                      . '<w:r>' . '<w:rPr>' . $fontXml . '<w:sz w:val="20"/></w:rPr>'
+                      . '<w:t xml:space="preserve">• </w:t></w:r>'
+                      . $runs
+                      . '</w:p>';
+                continue;
+            }
 
             // Los bullets no son negrita (son contenido de funciones)
             if ($isBullet) { $isFullBold = false; $isSplitLabel = false; }
@@ -1662,6 +1792,60 @@ SYSTEM;
             return DateTime::createFromFormat('d/m/Y', '01/01/' . $m[1]) ?: null;
         }
         return null;
+    }
+
+    private function toTitleCase(string $text): string
+    {
+        $minusculas = ['de', 'del', 'la', 'las', 'los', 'el', 'en', 'y', 'e', 'o', 'u', 'a'];
+        $words = explode(' ', $text);
+        foreach ($words as $i => &$w) {
+            if (mb_strlen($w, 'UTF-8') <= 1) continue;
+            if (mb_strtoupper($w, 'UTF-8') !== $w) continue;
+            $lower = mb_strtolower($w, 'UTF-8');
+            if ($i > 0 && in_array($lower, $minusculas, true)) {
+                $w = $lower;
+            } else {
+                $w = mb_strtoupper(mb_substr($lower, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($lower, 1, null, 'UTF-8');
+            }
+        }
+        return implode(' ', $words);
+    }
+
+    private function stripBoldMarkers(string $text): string
+    {
+        return str_replace('**', '', $text);
+    }
+
+    private function buildBoldKeywordRuns(string $text, string $fontXml): string
+    {
+        $rprBold   = '<w:rPr>' . $fontXml . '<w:b/><w:sz w:val="20"/></w:rPr>';
+        $rprNormal = '<w:rPr>' . $fontXml . '<w:sz w:val="20"/></w:rPr>';
+
+        // Split por **...** preservando delimitadores
+        $parts = preg_split('/\*\*(.+?)\*\*/u', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
+        $xml = '';
+        foreach ($parts as $i => $part) {
+            if ($part === '') continue;
+            $esc = htmlspecialchars($part, ENT_XML1, 'UTF-8');
+            $rpr = ($i % 2 === 1) ? $rprBold : $rprNormal; // impares = captura (bold)
+            $xml .= '<w:r>' . $rpr . '<w:t xml:space="preserve">' . $esc . '</w:t></w:r>';
+        }
+        return $xml;
+    }
+
+    private function fechaExpToSpanishText(string $fecha): string
+    {
+        $fecha = trim($fecha);
+        if (preg_match('/^(\d{1,2})\/(\d{4})$/', $fecha, $m)) {
+            $meses = [
+                '01'=>'Enero','02'=>'Febrero','03'=>'Marzo','04'=>'Abril',
+                '05'=>'Mayo','06'=>'Junio','07'=>'Julio','08'=>'Agosto',
+                '09'=>'Septiembre','10'=>'Octubre','11'=>'Noviembre','12'=>'Diciembre',
+            ];
+            $key = str_pad($m[1], 2, '0', STR_PAD_LEFT);
+            return ($meses[$key] ?? $m[1]) . ' ' . $m[2];
+        }
+        return $fecha;
     }
 
     private function parseSubstitutions(string $response): array

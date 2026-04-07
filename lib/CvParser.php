@@ -89,6 +89,13 @@ CAMPO "funciones" de experiencia:
 - Extrae SOLO las funciones/responsabilidades reales del puesto.
 - NO incluyas texto de perfil personal, frases como "Soy trabajador", "He cursado...", etc.
 - Si hay texto mezclado de perfil con funciones, sepáralos: el perfil va a "perfil_profesional", las funciones a "funciones".
+- IMPORTANTE — KEYWORDS EN NEGRITA: Envuelve con dobles asteriscos **...** SOLO palabras o términos técnicos muy concretos. Reglas estrictas:
+  * Marca SOLO sustantivos técnicos cortos: nombres de tecnologías, herramientas, conceptos técnicos clave, certificaciones o metodologías. Ej: **AWS**, **Docker**, **Active Directory**, **CI/CD**, **Scrum**, **MFA**, **SSH**, **Jenkins**, **React**, **Linux**, **Microsoft 365**, **Windows Server**.
+  * Cada keyword marcado debe tener entre 1 y 4 palabras MÁXIMO. Nunca envuelvas frases largas, oraciones ni descripciones completas.
+  * NO marques verbos, conectores, adjetivos genéricos, ni frases descriptivas como "operación y mantenimiento de sistemas en producción", "alto tráfico", "gestión de usuarios", "buenas prácticas". Solo el sustantivo técnico concreto.
+  * Marca máximo 3-5 keywords por función. Si una función no tiene términos técnicos claros, NO marques nada.
+  * Ejemplo CORRECTO: "Administración y mantenimiento de servidores **Windows** y **Linux** en entornos productivos. Uso de **Docker** y **Kubernetes** para despliegues."
+  * Ejemplo INCORRECTO: "**Administración y mantenimiento de servidores Windows y Linux en entornos productivos**" (frase entera marcada — MAL).
 
 CAMPO "entorno_tecnologico":
 - Incluye herramientas, tecnologías y software mencionados en esa experiencia concreta.
