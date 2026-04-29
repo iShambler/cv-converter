@@ -25,6 +25,26 @@ class TemplateFiller
     private string $apiUrl;
     private array  $applyLog = [];
 
+    /** numId a usar en numbering.xml para bullets reales, por plantilla. */
+    private const BULLET_NUMID = [
+        'accenture' => 29,
+        'arelance'  => 29,
+        'avanade'   => 20,
+        'eviden'    => 5,
+        'inetum'    => 7,
+        'ricoh'     => 1,
+        'atos'      => 46,
+    ];
+
+    /** Tamaño de fuente del renderer por plantilla, en medios-puntos (24 = 12pt). */
+    private const FONT_SIZE_HALFPOINTS = [
+        'accenture' => 24,
+        'arelance'  => 24,
+        'avanade'   => 24,
+        'atos'      => 24,
+    ];
+    private const DEFAULT_FONT_SIZE_HALFPOINTS = 20;
+
     public function __construct(string $templateKey, array $cvData)
     {
         $this->templateKey = $templateKey;
@@ -69,6 +89,16 @@ class TemplateFiller
             throw new Exception("No se pudo abrir la plantilla DOCX");
         }
         $xml = $zip->getFromName('word/document.xml');
+
+        // Inetum: plantilla en inglés con estructura específica → ruta dedicada en PHP, sin Claude.
+        if ($this->templateKey === 'inetum') {
+            $xml = $this->applyInetumNewTemplate($xml);
+            $xml = $this->cleanResidualPlaceholders($xml);
+            $zip->addFromString('word/document.xml', $xml);
+            $zip->close();
+            $this->saveLog([]);
+            return $this->outputPath;
+        }
 
         // PASO 1: Claude decide sustituciones de tabla y párrafos simples
         $templateText  = $this->extractTemplateText($xml);
@@ -229,9 +259,9 @@ PROHIBICIONES ABSOLUTAS:
 - IMPORTANTE: El campo "Experiencia (meses/años) en tecnología principal" debe rellenarse con exp_total. NO ponerlo en "otras tecnologías". El label para cell_after_label es "Experiencia (meses/años) en tecnología principal".
 
 REGLAS CRÍTICAS PARA RICOH (cabecera y datos personales):
-- "Datos personales" o "Datos personales:" es ÚNICAMENTE el título de una cabecera de sección que ya tiene su formato y su contenido en la plantilla. NO TOQUES esa celda bajo ningún concepto. PROHIBIDO generar cualquier sustitución (cell_after_label, paragraph_with_label, full_paragraph) que tenga "Datos personales" en label, original o cualquier campo. Debe quedar literalmente "Datos personales:" sin modificación alguna.
-- El nombre del candidato va exclusivamente en el label "Nombre" (usa cell_after_label con label="Nombre"). Si en la plantilla NO existe un label "Nombre" separado, NO inventes uno y NO pongas el nombre en otro sitio que se le parezca.
-- En la cabecera superior tipo "Nombre puesto - ESPOR00" (o similar): la palabra "Nombre" es un PLACEHOLDER que debes SUSTITUIR por el nombre completo del candidato dentro del mismo párrafo, manteniendo el resto del texto intacto. Usa "full_paragraph" con original="Nombre puesto - ESPOR00" y value="[Nombre del candidato] puesto - ESPOR00" (preservando exactamente el resto del texto del párrafo original). NUNCA añadas el nombre AL FINAL del párrafo ni después del código ESPOR00 — debe REEMPLAZAR la palabra "Nombre" en su posición original. Esta regla es SOLO para el párrafo de cabecera "Nombre puesto", NO para "Datos personales".
+- "Datos personales" o "Datos personales:" es el título de una cabecera de sección que rellena PHP automáticamente. NO TOQUES esa celda. PROHIBIDO generar cualquier sustitución (cell_after_label, paragraph_with_label, full_paragraph) que tenga "Datos personales" en label, original o cualquier campo. PHP se encarga de inyectar el nombre corto tras el título.
+- CABECERA SUPERIOR "Nombre de posición - ESPOR00XXX" (o similar con "Nombre de posición", "Nombre puesto" y cualquier variante que incluya "ESPOR00"): es un PLACEHOLDER literal que el usuario rellena manualmente después de crear el documento. NO LA TOQUES. PROHIBIDO generar cualquier sustitución (full_paragraph, paragraph_with_label, cell_after_label) sobre este párrafo. Debe quedar exactamente igual en el documento final.
+- El nombre del candidato va exclusivamente en el label "Nombre" dentro del cuadro de control/evaluación (usa cell_after_label con label="Nombre"). Si en la plantilla NO existe un label "Nombre" separado, NO inventes uno y NO pongas el nombre en otro sitio que se le parezca.
 
 Responde SOLO con JSON válido. Sin markdown. Sin comentarios.
 {"substitutions": [...]}
@@ -466,7 +496,12 @@ SYSTEM;
                 if ($year) $lines[] = $year;
                 $tituloLine = $titulo;
                 if ($centro) $tituloLine .= '. ' . $centro;
-                if ($tituloLine) $lines[] = $tituloLine;
+                if ($tituloLine) {
+                    if (in_array($tpl, ['arelance', 'accenture'])) {
+                        $tituloLine = '[BOLD]' . $tituloLine;
+                    }
+                    $lines[] = $tituloLine;
+                }
             } else {
                 if ($fecha)  $lines[] = $fecha;
                 if ($titulo) $lines[] = $titulo;
@@ -875,29 +910,33 @@ SYSTEM;
     }
 
     /**
-     * Ricoh: la celda "Datos personales:" tiene un placeholder tipo "Nombre A.A"
-     * que debe quedar limpio. Encuentra cualquier párrafo que empiece por
-     * "Datos personales" y reemplaza todo el texto del párrafo por solo "Datos personales:".
+     * Ricoh: la celda "Datos personales:" lleva el nombre corto del candidato
+     * en formato "Nombre I.I" (primer nombre + iniciales de los apellidos unidas con puntos).
+     * Reemplaza el placeholder "Nombre A. A." por el nombre real formateado.
      */
     private function cleanRicohDatosPersonales(string $xml): string
     {
+        $nombreCompleto = trim($this->cv['datos_personales']['nombre_completo'] ?? '');
+        $nombreCorto    = $this->buildRicohNombreCorto($nombreCompleto);
+        $valueXml       = $nombreCorto !== ''
+            ? 'Datos personales: ' . htmlspecialchars($nombreCorto, ENT_XML1, 'UTF-8')
+            : 'Datos personales:';
+
         return preg_replace_callback(
             '~<w:p\b[^>]*>.*?</w:p>~s',
-            function ($m) {
+            function ($m) use ($valueXml) {
                 $paraXml = $m[0];
                 preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $paraXml, $pt);
                 $text = trim(implode('', $pt[1]));
                 if (stripos($text, 'datos personales') !== 0) return $paraXml;
 
-                // Reemplazar el texto de TODOS los <w:t> de este párrafo:
-                // dejar solo "Datos personales:" en el primero y vaciar el resto.
                 $first = true;
                 return preg_replace_callback(
                     '~(<w:t[^>]*>)([^<]*)(</w:t>)~',
-                    function ($mt) use (&$first) {
+                    function ($mt) use (&$first, $valueXml) {
                         if ($first) {
                             $first = false;
-                            return $mt[1] . 'Datos personales:' . $mt[3];
+                            return $mt[1] . $valueXml . $mt[3];
                         }
                         return $mt[1] . $mt[3];
                     },
@@ -906,6 +945,29 @@ SYSTEM;
             },
             $xml
         ) ?? $xml;
+    }
+
+    /**
+     * Construye el nombre corto para la cabecera "Datos personales" de Ricoh:
+     * primer nombre seguido de las iniciales de los apellidos unidas con puntos.
+     * Ej: "Victor Martínez Alvarez" -> "Victor M.A"
+     */
+    private function buildRicohNombreCorto(string $nombreCompleto): string
+    {
+        $nombreCompleto = preg_replace('/\s+/u', ' ', trim($nombreCompleto));
+        if ($nombreCompleto === '') return '';
+
+        $parts = explode(' ', $nombreCompleto);
+        $first = array_shift($parts);
+        if (empty($parts)) return $first;
+
+        $iniciales = [];
+        foreach ($parts as $p) {
+            $ch = mb_substr($p, 0, 1, 'UTF-8');
+            if ($ch !== '') $iniciales[] = mb_strtoupper($ch, 'UTF-8');
+        }
+
+        return $first . ' ' . implode('.', $iniciales);
     }
 
     /**
@@ -1276,6 +1338,478 @@ SYSTEM;
     }
 
     // =========================================================================
+    // INETUM (nueva plantilla en inglés) — todas las secciones se construyen en PHP
+    // =========================================================================
+
+    private function applyInetumNewTemplate(string $xml): string
+    {
+        $xml = $this->applyInetumHeader($xml);
+        $xml = $this->applyInetumExperienceCells($xml);
+        $xml = $this->applyInetumTechnicalSkills($xml);
+        $xml = $this->applyInetumLanguages($xml);
+        $xml = $this->applyInetumTraining($xml);
+        $xml = $this->applyInetumProfessionalExperience($xml);
+        return $xml;
+    }
+
+    /**
+     * Reemplaza los placeholders de cabecera "FIRST NAME LAST NAME" y "Position".
+     */
+    private function applyInetumHeader(string $xml): string
+    {
+        $dp = $this->cv['datos_personales'] ?? [];
+        $nombre = trim($dp['nombre_completo'] ?? '');
+        if ($nombre !== '') {
+            $xml = $this->replaceParaText($xml, 'FIRST NAME LAST NAME', mb_strtoupper($nombre, 'UTF-8'));
+        }
+
+        $position = $this->getInetumPosition();
+        if ($position !== '') {
+            $xml = $this->replaceParaText($xml, 'Position', $position);
+        }
+        return $xml;
+    }
+
+    /**
+     * Determina el "Position" del candidato: cargo de la experiencia más reciente,
+     * o primera línea de perfil_profesional como fallback.
+     */
+    private function getInetumPosition(): string
+    {
+        $exps = $this->cv['experiencia_laboral'] ?? [];
+        if (!empty($exps)) {
+            $latest = $exps[0];
+            $cargo  = trim($latest['cargo'] ?? '') ?: trim($latest['categoria'] ?? '');
+            if ($cargo !== '') return $this->toTitleCase($cargo);
+        }
+        $perfil = trim($this->cv['perfil_profesional'] ?? '');
+        if ($perfil !== '') {
+            $first = explode("\n", $perfil)[0];
+            return mb_substr(trim($first), 0, 80, 'UTF-8');
+        }
+        return '';
+    }
+
+    /**
+     * Sección EXPERIENCE: rellena las dos celdas "Functional Skills:" y
+     * "Areas of intervention:" con datos derivados del CV.
+     */
+    private function applyInetumExperienceCells(string $xml): string
+    {
+        $softSkills = trim($this->cv['soft_skills'] ?? '');
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'Functional Skills:', $softSkills);
+
+        $sectors = $this->extractInetumSectors();
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'Areas of intervention:', $sectors);
+
+        return $xml;
+    }
+
+    /**
+     * Construye una lista de sectores/clientes únicos a partir de la experiencia laboral.
+     */
+    private function extractInetumSectors(): string
+    {
+        $exps = $this->cv['experiencia_laboral'] ?? [];
+        $clientes = [];
+        foreach ($exps as $exp) {
+            $c = trim($exp['cliente'] ?? '');
+            if ($c !== '') $clientes[] = $c;
+        }
+        $unique = array_values(array_unique($clientes));
+        return implode(', ', $unique);
+    }
+
+    /**
+     * Sección TECHNICAL SKILLS: rellena cada mini-tabla con la columna correspondiente.
+     */
+    private function applyInetumTechnicalSkills(string $xml): string
+    {
+        $kt = $this->cv['conocimientos_tecnicos'] ?? [];
+
+        $lenguajes = trim($kt['lenguajes_programacion'] ?? '');
+        $ssoo      = trim($kt['sistemas_operativos']    ?? '');
+        $bbdd      = trim($kt['bases_datos']            ?? '');
+        $frameworks= trim($kt['frameworks']             ?? '');
+        $cloud     = trim($kt['cloud']                  ?? '');
+        $otros     = trim($kt['otros']                  ?? '');
+
+        $tools   = trim($frameworks);
+        $product = trim(implode(', ', array_filter([$cloud, $otros])));
+
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'TOOLS:',                $tools);
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'LANGUAGES / AGL:',      $lenguajes);
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'TELECOMMUNICATIONS:',   '');
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'SYSTEMS:',              $ssoo);
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'NETWORKS / SECURITY:',  '');
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'DATABASES:',            $bbdd);
+        $xml = $this->replaceInetumCellAfterLabel($xml, 'PRODUCT:',              $product);
+
+        return $xml;
+    }
+
+    /**
+     * Sección LANGUAGES: reemplaza las filas de la tabla con una fila por idioma.
+     */
+    private function applyInetumLanguages(string $xml): string
+    {
+        $idiomas = $this->cv['idiomas'] ?? [];
+
+        $titlePos = $this->findInetumParaOffset($xml, 'LANGUAGES');
+        if ($titlePos === null) return $xml;
+
+        // Encontrar la primera tabla después del título
+        if (!preg_match('~<w:tbl\b[^>]*>.*?</w:tbl>~s', $xml, $tm, PREG_OFFSET_CAPTURE, $titlePos['end'])) {
+            return $xml;
+        }
+        $tableXml = $tm[0][0];
+        $tableOff = $tm[0][1];
+
+        preg_match_all('~<w:tr\b[^>]*>(?:(?!</w:tr>).)*?</w:tr>~s', $tableXml, $rowMatches);
+        if (empty($rowMatches[0])) return $xml;
+
+        $allRows = '';
+        if (empty($idiomas)) {
+            // Sin idiomas: respetar plantilla (mantener labels SPOKE:/LU:) pero
+            // limpiar el dato ejemplo de la celda derecha.
+            foreach ($rowMatches[0] as $row) {
+                preg_match_all('~(<w:tc\b[^>]*>(?:(?!</w:tc>).)*?</w:tc>)~s', $row, $cells);
+                if (count($cells[1]) < 2) { $allRows .= $row; continue; }
+                $newCellRight = $this->setCellSingleText($cells[1][1], '');
+                $newRow = str_replace($cells[1][1], $newCellRight, $row);
+                $allRows .= $newRow;
+            }
+        } else {
+            $templateRow = $rowMatches[0][0];
+            foreach ($idiomas as $idioma) {
+                $nombre = trim($idioma['idioma'] ?? '');
+                $nivel  = trim($idioma['nivel_general'] ?? '');
+                if ($nombre === '') continue;
+
+                $label = mb_strtoupper($nombre, 'UTF-8') . ':';
+                $allRows .= $this->buildInetumLanguageRow($templateRow, $label, $nivel);
+            }
+            if ($allRows === '') return $xml;
+        }
+
+        // Sustituir todas las filas template con las nuevas
+        $newTable = preg_replace(
+            '~(<w:tbl\b[^>]*>(?:<w:tblPr>.*?</w:tblPr>)?(?:<w:tblGrid>.*?</w:tblGrid>)?).*?(</w:tbl>)~s',
+            '$1' . $allRows . '$2',
+            $tableXml,
+            1
+        );
+
+        return substr_replace($xml, $newTable, $tableOff, strlen($tableXml));
+    }
+
+    /**
+     * Clona una fila de idioma de la tabla LANGUAGES y rellena las dos celdas.
+     */
+    private function buildInetumLanguageRow(string $templateRow, string $label, string $valor): string
+    {
+        preg_match_all('~(<w:tc\b[^>]*>(?:(?!</w:tc>).)*?</w:tc>)~s', $templateRow, $cells);
+        if (count($cells[1]) < 2) return $templateRow;
+
+        $newRow = $templateRow;
+        $newCellLabel = $this->setCellSingleText($cells[1][0], $label);
+        $newRow = str_replace($cells[1][0], $newCellLabel, $newRow);
+        $newCellValue = $this->setCellSingleText($cells[1][1], $valor);
+        $newRow = str_replace($cells[1][1], $newCellValue, $newRow);
+        return $newRow;
+    }
+
+    /**
+     * Sección TRAINING: reemplaza la fila placeholder con una fila por
+     * elemento de formacion_academica + formacion_complementaria.
+     */
+    private function applyInetumTraining(string $xml): string
+    {
+        $items = array_merge(
+            $this->cv['formacion_academica'] ?? [],
+            $this->cv['formacion_complementaria'] ?? []
+        );
+
+        $titlePos = $this->findInetumParaOffset($xml, 'TRAINING');
+        if ($titlePos === null) return $xml;
+
+        if (!preg_match('~<w:tbl\b[^>]*>.*?</w:tbl>~s', $xml, $tm, PREG_OFFSET_CAPTURE, $titlePos['end'])) {
+            return $xml;
+        }
+        $tableXml = $tm[0][0];
+        $tableOff = $tm[0][1];
+
+        preg_match_all('~<w:tr\b[^>]*>(?:(?!</w:tr>).)*?</w:tr>~s', $tableXml, $rowMatches);
+        if (empty($rowMatches[0])) return $xml;
+        $templateRow = $rowMatches[0][0];
+
+        // Si no hay formación: respetar plantilla (mantener fila) pero limpiar
+        // los datos de ejemplo (año + descripción).
+        if (empty($items)) {
+            $emptyRow = $this->buildInetumTrainingRow($templateRow, '', '');
+            $newTable = preg_replace(
+                '~(<w:tbl\b[^>]*>(?:<w:tblPr>.*?</w:tblPr>)?(?:<w:tblGrid>.*?</w:tblGrid>)?).*?(</w:tbl>)~s',
+                '$1' . $emptyRow . '$2',
+                $tableXml,
+                1
+            );
+            return substr_replace($xml, $newTable, $tableOff, strlen($tableXml));
+        }
+
+        $allRows = '';
+        foreach ($items as $item) {
+            $fecha  = trim($item['fecha']  ?? '');
+            $titulo = trim($item['titulo'] ?? '');
+            $centro = trim($item['centro'] ?? '');
+            $year   = $this->extractYear($fecha) ?: $fecha;
+
+            $desc = $titulo;
+            if ($centro !== '') $desc = $titulo !== '' ? $titulo . '. ' . $centro : $centro;
+            if ($desc === '' && $year === '') continue;
+
+            $allRows .= $this->buildInetumTrainingRow($templateRow, $year, $desc);
+        }
+        if ($allRows === '') return $xml;
+
+        $newTable = preg_replace(
+            '~(<w:tbl\b[^>]*>(?:<w:tblPr>.*?</w:tblPr>)?(?:<w:tblGrid>.*?</w:tblGrid>)?).*?(</w:tbl>)~s',
+            '$1' . $allRows . '$2',
+            $tableXml,
+            1
+        );
+
+        return substr_replace($xml, $newTable, $tableOff, strlen($tableXml));
+    }
+
+    /**
+     * Clona la fila template de TRAINING y rellena año + descripción.
+     */
+    private function buildInetumTrainingRow(string $templateRow, string $year, string $desc): string
+    {
+        preg_match_all('~(<w:tc\b[^>]*>(?:(?!</w:tc>).)*?</w:tc>)~s', $templateRow, $cells);
+        if (count($cells[1]) < 2) return $templateRow;
+
+        $newRow = $templateRow;
+        $yearLabel = $year !== '' ? $year . ' :' : '';
+        $newCell0 = $this->setCellSingleText($cells[1][0], $yearLabel);
+        $newRow = str_replace($cells[1][0], $newCell0, $newRow);
+        $newCell1 = $this->setCellSingleText($cells[1][1], $desc);
+        $newRow = str_replace($cells[1][1], $newCell1, $newRow);
+        return $newRow;
+    }
+
+    /**
+     * Sección PROFESSIONAL EXPERIENCE: sustituye todo el bloque ejemplo (desde el
+     * título hasta el final del body) por un bloque por experiencia generado en PHP.
+     */
+    private function applyInetumProfessionalExperience(string $xml): string
+    {
+        $exps = $this->cv['experiencia_laboral'] ?? [];
+
+        $titlePos = $this->findInetumParaOffset($xml, 'PROFESSIONAL EXPERIENCE');
+        if ($titlePos === null) return $xml;
+
+        // Localizar el cierre del body (antes de </w:body> o <w:sectPr>)
+        $bodyEndPos = strpos($xml, '<w:sectPr', $titlePos['end']);
+        if ($bodyEndPos === false) {
+            $bodyEndPos = strpos($xml, '</w:body>', $titlePos['end']);
+        }
+        if ($bodyEndPos === false) return $xml;
+
+        // Sin experiencias: respetar plantilla (mantener un bloque ejemplo) pero
+        // con todos los datos vacíos.
+        if (empty($exps)) {
+            $blocks = $this->buildInetumExperienceBlock([]);
+            return substr($xml, 0, $titlePos['end']) . $blocks . substr($xml, $bodyEndPos);
+        }
+
+        $blocks = '';
+        foreach ($exps as $exp) {
+            $blocks .= $this->buildInetumExperienceBlock($exp);
+        }
+
+        return substr($xml, 0, $titlePos['end']) . $blocks . substr($xml, $bodyEndPos);
+    }
+
+    /**
+     * Construye el XML OOXML completo de un bloque de experiencia para Inetum:
+     * tabla [empresa | fechas] + cargo + cliente (italic) + bullets de funciones + Environment.
+     */
+    private function buildInetumExperienceBlock(array $exp): string
+    {
+        $empresa     = trim($exp['empresa']             ?? '');
+        $fechaInicio = trim($exp['fecha_inicio']        ?? '');
+        $fechaFin    = trim($exp['fecha_fin']           ?? '');
+        $cliente     = trim($exp['cliente']             ?? '');
+        $cargo       = trim($exp['cargo']               ?? '') ?: trim($exp['categoria'] ?? '');
+        $func        = $this->stripBoldMarkers(trim($exp['funciones'] ?? ''));
+        $entorno     = trim($exp['entorno_tecnologico'] ?? '');
+
+        if ($fechaFin === '' || preg_match('/^actualidad$/i', $fechaFin)) {
+            $fechaStr = $fechaInicio !== '' ? $fechaInicio . ' to date' : '';
+        } else {
+            $fechaStr = trim($fechaInicio . ' - ' . $fechaFin, ' -');
+        }
+
+        $empresaEsc = htmlspecialchars($empresa, ENT_XML1, 'UTF-8');
+        $fechaEsc   = htmlspecialchars($fechaStr, ENT_XML1, 'UTF-8');
+        $cargoEsc   = htmlspecialchars($cargo, ENT_XML1, 'UTF-8');
+        $clienteEsc = htmlspecialchars($cliente, ENT_XML1, 'UTF-8');
+
+        $rprBoldNavy   = '<w:rPr><w:rFonts w:ascii="Poppins Light" w:hAnsi="Poppins Light" w:cs="Poppins Light"/><w:b/><w:bCs/><w:color w:val="232D4B"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+        $rprNavy       = '<w:rPr><w:rFonts w:ascii="Poppins Light" w:hAnsi="Poppins Light" w:cs="Poppins Light"/><w:color w:val="232D4B"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+        $rprNavyItalic = '<w:rPr><w:rFonts w:ascii="Poppins Light" w:hAnsi="Poppins Light" w:cs="Poppins Light"/><w:i/><w:color w:val="232D4B"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+        $rprPinkBullet = '<w:rPr><w:rFonts w:ascii="Poppins Light" w:hAnsi="Poppins Light" w:cs="Poppins Light"/><w:color w:val="DA1984" w:themeColor="background2"/><w:szCs w:val="20"/></w:rPr>';
+        $rprEnvLabel   = '<w:rPr><w:rFonts w:ascii="Poppins SemiBold" w:hAnsi="Poppins SemiBold" w:cs="Poppins SemiBold"/><w:bCs/><w:i/><w:iCs/><w:color w:val="DA1984" w:themeColor="background2"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>';
+        $rprEnvValue   = '<w:rPr><w:rFonts w:ascii="Poppins Light" w:hAnsi="Poppins Light" w:cs="Poppins Light"/><w:color w:val="232D4B"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+
+        $out = '';
+
+        // Tabla con empresa | fechas, borde inferior negro
+        $out .= '<w:tbl>';
+        $out .= '<w:tblPr><w:tblW w:w="9750" w:type="dxa"/><w:tblBorders><w:bottom w:val="single" w:sz="8" w:space="0" w:color="0D0D0D"/></w:tblBorders><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="0000"/></w:tblPr>';
+        $out .= '<w:tblGrid><w:gridCol w:w="5457"/><w:gridCol w:w="4293"/></w:tblGrid>';
+        $out .= '<w:tr>';
+        $out .= '<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:vAlign w:val="center"/></w:tcPr>';
+        $out .= '<w:p><w:r>' . $rprBoldNavy . '<w:t xml:space="preserve">' . $empresaEsc . '</w:t></w:r></w:p>';
+        $out .= '</w:tc>';
+        $out .= '<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:vAlign w:val="center"/></w:tcPr>';
+        $out .= '<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r>' . $rprBoldNavy . '<w:t xml:space="preserve">' . $fechaEsc . '</w:t></w:r></w:p>';
+        $out .= '</w:tc>';
+        $out .= '</w:tr>';
+        $out .= '</w:tbl>';
+
+        // Párrafo vacío de separación
+        $out .= '<w:p><w:pPr><w:rPr><w:rFonts w:ascii="Poppins Light" w:hAnsi="Poppins Light" w:cs="Poppins Light"/><w:color w:val="232D4B"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr></w:p>';
+
+        // Cargo (Function)
+        if ($cargo !== '') {
+            $out .= '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr>'
+                  . '<w:r>' . $rprNavy . '<w:t xml:space="preserve">' . $cargoEsc . '</w:t></w:r>'
+                  . '</w:p>';
+        }
+
+        // Cliente (Project Type – Project Name) en cursiva
+        if ($cliente !== '') {
+            $out .= '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr>'
+                  . '<w:r>' . $rprNavyItalic . '<w:t xml:space="preserve">' . $clienteEsc . '</w:t></w:r>'
+                  . '</w:p>';
+        }
+
+        // Espacio antes de los bullets
+        $out .= '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>';
+
+        // Bullets para cada función (estilo Puce1 + numId 7 — color rosa)
+        if ($func !== '') {
+            $bullets = $this->splitFuncionesIntoBullets($func);
+            foreach ($bullets as $b) {
+                $bEsc = htmlspecialchars($b, ENT_XML1, 'UTF-8');
+                $out .= '<w:p>'
+                      . '<w:pPr><w:pStyle w:val="Puce1"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/></w:numPr></w:pPr>'
+                      . '<w:r>' . $rprPinkBullet . '<w:t xml:space="preserve">' . $bEsc . '</w:t></w:r>'
+                      . '</w:p>';
+            }
+        }
+
+        // Environment: ... (rosa, italic, bold, sz 24 + run navy 20 con el contenido)
+        if ($entorno !== '') {
+            $entornoEsc = htmlspecialchars($this->normalizeEntornoCommas($entorno), ENT_XML1, 'UTF-8');
+            $out .= '<w:p>'
+                  . '<w:pPr><w:spacing w:before="120" w:after="60"/></w:pPr>'
+                  . '<w:r>' . $rprEnvLabel . '<w:t xml:space="preserve">Environment: </w:t></w:r>'
+                  . '<w:r>' . $rprEnvValue . '<w:t xml:space="preserve">' . $entornoEsc . '</w:t></w:r>'
+                  . '</w:p>';
+        }
+
+        // Separador entre experiencias
+        $out .= '<w:p><w:pPr><w:rPr><w:rFonts w:ascii="Poppins Light" w:hAnsi="Poppins Light" w:cs="Poppins Light"/><w:sz w:val="20"/></w:rPr></w:pPr></w:p>';
+
+        return $out;
+    }
+
+    /**
+     * Busca el primer párrafo cuyo texto visible (concatenando runs) sea $text.
+     * Devuelve ['offset' => ..., 'end' => ...] o null si no lo encuentra.
+     */
+    private function findInetumParaOffset(string $xml, string $text): ?array
+    {
+        $offset = 0;
+        while (preg_match('~<w:p\b[^>]*>.*?</w:p>~s', $xml, $pm, PREG_OFFSET_CAPTURE, $offset)) {
+            $paraXml = $pm[0][0];
+            $paraOff = $pm[0][1];
+            preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $paraXml, $pt);
+            $paraText = trim(implode('', $pt[1]));
+            if ($paraText === $text) {
+                return ['offset' => $paraOff, 'end' => $paraOff + strlen($paraXml)];
+            }
+            $offset = $paraOff + strlen($paraXml);
+        }
+        return null;
+    }
+
+    /**
+     * Reemplaza el contenido de la celda DERECHA cuyo label izquierdo (en la
+     * misma fila) coincida con $label. Limpia todos los <w:t> existentes en la
+     * celda destino y deja $value en el primer <w:t>.
+     */
+    private function replaceInetumCellAfterLabel(string $xml, string $label, string $value): string
+    {
+        $labelN = preg_replace('/\s+/', ' ', trim($label));
+        if ($labelN === '') return $xml;
+
+        preg_match_all('~<w:tr\b[^>]*>(?:(?!</w:tr>).)*?</w:tr>~s', $xml, $rowMatches, PREG_OFFSET_CAPTURE);
+
+        foreach ($rowMatches[0] as $rowMatch) {
+            $rowXml    = $rowMatch[0];
+            $rowOffset = $rowMatch[1];
+
+            preg_match_all('~(<w:tc\b[^>]*>(?:(?!</w:tc>).)*?</w:tc>)~s', $rowXml, $cells);
+            if (count($cells[1]) < 2) continue;
+
+            preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $cells[1][0], $ct);
+            $cellText = preg_replace('/\s+/', ' ', trim(implode('', $ct[1])));
+            if (stripos($cellText, $labelN) === false) continue;
+
+            $targetCell = $cells[1][1];
+            $newCell    = $this->setCellSingleText($targetCell, $value);
+            $newRow     = str_replace($targetCell, $newCell, $rowXml);
+            return substr_replace($xml, $newRow, $rowOffset, strlen($rowXml));
+        }
+        return $xml;
+    }
+
+    /**
+     * Pone $value como el único texto visible de la celda: deja $value en el
+     * primer <w:t> que encuentra y vacía el resto. Si no hay <w:t>, inyecta uno.
+     */
+    private function setCellSingleText(string $cell, string $value): string
+    {
+        $valEsc = htmlspecialchars($value, ENT_XML1, 'UTF-8');
+
+        if (preg_match('/<w:t[^>]*>[^<]*<\/w:t>/', $cell)) {
+            $first = true;
+            return preg_replace_callback(
+                '/<w:t([^>]*)>[^<]*<\/w:t>/',
+                function ($m) use ($valEsc, &$first) {
+                    if ($first) {
+                        $first = false;
+                        $attrs = $m[1];
+                        if ($valEsc !== '' && strpos($attrs, 'xml:space') === false) {
+                            $attrs .= ' xml:space="preserve"';
+                        }
+                        return '<w:t' . $attrs . '>' . $valEsc . '</w:t>';
+                    }
+                    return '<w:t' . $m[1] . '></w:t>';
+                },
+                $cell
+            );
+        }
+
+        // Sin <w:t>: usar injectInCell genérico
+        return $this->injectInCell($cell, $valEsc);
+    }
+
+    // =========================================================================
     // OPERACIONES XML
     // =========================================================================
 
@@ -1616,6 +2150,9 @@ SYSTEM;
             $fontXml = '<w:rFonts w:ascii="' . $font . '" w:hAnsi="' . $font . '"/>';
         }
 
+        $sz    = self::FONT_SIZE_HALFPOINTS[$this->templateKey] ?? self::DEFAULT_FONT_SIZE_HALFPOINTS;
+        $szXml = '<w:sz w:val="' . $sz . '"/><w:szCs w:val="' . $sz . '"/>';
+
         $lines = explode("\n", $text);
         $xml   = '';
         $afterFunciones = false; // Indica si la línea anterior fue "Funciones:"
@@ -1640,10 +2177,15 @@ SYSTEM;
                 $isMarkerBold = true;
             }
 
-            // Detectar bullets (• o -) para aplicar indentación
+            // Detectar bullets (• o -) para emitir bullet real de Word (numPr)
             $isBullet = (bool) preg_match('/^[•\-]\s/u', $line);
-            $indent = $isBullet
-                ? '<w:ind w:left="360" w:hanging="180"/>'
+            if ($isBullet) {
+                // Quitar el prefijo literal: el bullet lo pinta Word desde numbering.xml
+                $line = preg_replace('/^[•\-]\s+/u', '', $line);
+            }
+            $numId = self::BULLET_NUMID[$this->templateKey] ?? null;
+            $indent = ($isBullet && $numId !== null)
+                ? '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="' . $numId . '"/></w:numPr>'
                 : '';
 
             // Detectar si esta línea es texto de funciones (justo después de "Funciones:")
@@ -1656,7 +2198,7 @@ SYSTEM;
 
             // Renderizar rol en azul+negrita o empresa en negrita, y continuar
             if ($isBlueRole) {
-                $rprBlue = '<w:rPr>' . $fontXml . '<w:b/><w:color w:val="0070C0"/><w:sz w:val="20"/></w:rPr>';
+                $rprBlue = '<w:rPr>' . $fontXml . '<w:b/><w:color w:val="0070C0"/>' . $szXml . '</w:rPr>';
                 $xml .= '<w:p>'
                       . '<w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>'
                       . '<w:r>' . $rprBlue . '<w:t xml:space="preserve">' . $esc . '</w:t></w:r>'
@@ -1664,7 +2206,7 @@ SYSTEM;
                 continue;
             }
             if ($isMarkerBold) {
-                $rprBoldM = '<w:rPr>' . $fontXml . '<w:b/><w:sz w:val="20"/></w:rPr>';
+                $rprBoldM = '<w:rPr>' . $fontXml . '<w:b/>' . $szXml . '</w:rPr>';
                 $xml .= '<w:p>'
                       . '<w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>'
                       . '<w:r>' . $rprBoldM . '<w:t xml:space="preserve">' . $esc . '</w:t></w:r>'
@@ -1692,12 +2234,9 @@ SYSTEM;
 
             // Bullets con **keywords** en negrita: generar runs mixtos
             if ($isBullet && str_contains($line, '**')) {
-                $bulletText = preg_replace('/^[•\-]\s/u', '', $line);
-                $runs = $this->buildBoldKeywordRuns($bulletText, $fontXml);
+                $runs = $this->buildBoldKeywordRuns($line, $fontXml);
                 $xml .= '<w:p>'
                       . '<w:pPr><w:spacing w:before="0" w:after="40"/>' . $indent . '</w:pPr>'
-                      . '<w:r>' . '<w:rPr>' . $fontXml . '<w:sz w:val="20"/></w:rPr>'
-                      . '<w:t xml:space="preserve">• </w:t></w:r>'
                       . $runs
                       . '</w:p>';
                 continue;
@@ -1718,8 +2257,8 @@ SYSTEM;
             // Si se fuerza negrita (ej: conocimientos técnicos), aplicar siempre a toda la línea
             if ($forceBold) { $isFullBold = true; $isSplitLabel = false; }
 
-            $rprBold   = '<w:rPr>' . $fontXml . '<w:b/><w:sz w:val="20"/></w:rPr>';
-            $rprNormal = '<w:rPr>' . $fontXml . '<w:sz w:val="20"/></w:rPr>';
+            $rprBold   = '<w:rPr>' . $fontXml . '<w:b/>' . $szXml . '</w:rPr>';
+            $rprNormal = '<w:rPr>' . $fontXml . $szXml . '</w:rPr>';
 
             if ($isSplitLabel && preg_match('/^([^:]+:\s*)(.+)$/', $line, $parts)) {
                 // Dos runs: label en negrita + contenido normal
@@ -1818,8 +2357,10 @@ SYSTEM;
 
     private function buildBoldKeywordRuns(string $text, string $fontXml): string
     {
-        $rprBold   = '<w:rPr>' . $fontXml . '<w:b/><w:sz w:val="20"/></w:rPr>';
-        $rprNormal = '<w:rPr>' . $fontXml . '<w:sz w:val="20"/></w:rPr>';
+        $sz    = self::FONT_SIZE_HALFPOINTS[$this->templateKey] ?? self::DEFAULT_FONT_SIZE_HALFPOINTS;
+        $szXml = '<w:sz w:val="' . $sz . '"/><w:szCs w:val="' . $sz . '"/>';
+        $rprBold   = '<w:rPr>' . $fontXml . '<w:b/>' . $szXml . '</w:rPr>';
+        $rprNormal = '<w:rPr>' . $fontXml . $szXml . '</w:rPr>';
 
         // Split por **...** preservando delimitadores
         $parts = preg_split('/\*\*(.+?)\*\*/u', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
