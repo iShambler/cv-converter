@@ -9,7 +9,23 @@
       "Bash(/c/xampp99/php/php.exe -l historial.php)",
       "Bash(unzip -p templates/Atos*.docx word/document.xml)",
       "Bash(/c/xampp99/php/php.exe -r \":*)",
-      "Bash(/c/xampp99/php/php.exe -r \"\n\\\\$z = new ZipArchive\\(\\);\n\\\\$z->open\\('C:/xampp99/htdocs/cv-converter/templates/Avanade.docx'\\);\n\\\\$xml = \\\\$z->getFromName\\('word/document.xml'\\);\n\\\\$z->close\\(\\);\n// Show first few rPr to see what font the template uses\npreg_match_all\\('/<w:rFonts[^>]*>/', \\\\$xml, \\\\$m\\);\n\\\\$unique = array_unique\\(\\\\$m[0]\\);\nforeach \\(\\\\$unique as \\\\$f\\) echo \\\\$f . PHP_EOL;\n\")"
+      "Bash(/c/xampp99/php/php.exe -r \"\n\\\\$z = new ZipArchive\\(\\);\n\\\\$z->open\\('C:/xampp99/htdocs/cv-converter/templates/Avanade.docx'\\);\n\\\\$xml = \\\\$z->getFromName\\('word/document.xml'\\);\n\\\\$z->close\\(\\);\n// Show first few rPr to see what font the template uses\npreg_match_all\\('/<w:rFonts[^>]*>/', \\\\$xml, \\\\$m\\);\n\\\\$unique = array_unique\\(\\\\$m[0]\\);\nforeach \\(\\\\$unique as \\\\$f\\) echo \\\\$f . PHP_EOL;\n\")",
+      "Bash(C:/xampp99/php/php.exe:*)",
+      "Bash(unzip -p templates/Ricoh.docx word/document.xml)",
+      "Read(//tmp/**)",
+      "Bash(mkdir -p /c/tmp)",
+      "Read(//c/tmp/**)",
+      "Bash(python *)",
+      "Bash(php *)",
+      "PowerShell(python C:/tmp/check_indent.py)",
+      "Bash(C:/xampp99/php/php.exe *)",
+      "Bash(cp /c/xampp99/htdocs/cv-converter/templates/Inetum.docx /c/xampp99/htdocs/cv-converter/templates/Inetum.docx.bak)",
+      "Bash(cp \"/c/Users/pablo.solis/Documents/CV_ INETUM_SPAIN.docx\" /c/xampp99/htdocs/cv-converter/templates/Inetum.docx)",
+      "Bash(/c/xampp99/php/php.exe -l /c/xampp99/htdocs/cv-converter/lib/TemplateFiller.php)",
+      "Bash(awk '/RESPUESTA DE OPENAI/,/=== /' \"/c/xampp99/htdocs/cv-converter/output/DEBUG_Curriculum Pablo Solís_20260227_134552.txt\")",
+      "Bash(/c/xampp99/php/php.exe *)",
+      "Read(//c/Users/pablo.solis/Desktop/**)",
+      "Read(//c/Users/pablo.solis/Desktop//**)"
     ]
   }
 }
