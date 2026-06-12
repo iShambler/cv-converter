@@ -34,6 +34,7 @@ class TemplateFiller
         'inetum'    => 7,
         'ricoh'     => 1,
         'atos'      => 46,
+        'ey'        => 19,
     ];
 
     /** Tamaño de fuente del renderer por plantilla, en medios-puntos (24 = 12pt). */
@@ -42,6 +43,7 @@ class TemplateFiller
         'arelance'  => 24,
         'avanade'   => 24,
         'atos'      => 24,
+        'ey'        => 24,
     ];
     private const DEFAULT_FONT_SIZE_HALFPOINTS = 20;
 
@@ -93,6 +95,16 @@ class TemplateFiller
         // Inetum: plantilla en inglés con estructura específica → ruta dedicada en PHP, sin Claude.
         if ($this->templateKey === 'inetum') {
             $xml = $this->applyInetumNewTemplate($xml);
+            $xml = $this->cleanResidualPlaceholders($xml);
+            $zip->addFromString('word/document.xml', $xml);
+            $zip->close();
+            $this->saveLog([]);
+            return $this->outputPath;
+        }
+
+        // EY: plantilla en inglés con secciones y bloques de experiencia fijos → ruta dedicada en PHP, sin Claude.
+        if ($this->templateKey === 'ey') {
+            $xml = $this->applyEyNewTemplate($xml);
             $xml = $this->cleanResidualPlaceholders($xml);
             $zip->addFromString('word/document.xml', $xml);
             $zip->close();
@@ -482,7 +494,7 @@ SYSTEM;
         if (empty($items)) return $xml;
 
         $tpl = $this->templateKey;
-        $isCompactStyle = in_array($tpl, ['arelance', 'accenture', 'avanade']);
+        $isCompactStyle = in_array($tpl, ['arelance', 'accenture', 'avanade', 'ey']);
 
         $lines = [];
         foreach ($items as $item) {
@@ -524,6 +536,7 @@ SYSTEM;
         $xml = $this->applySectionContent($xml, 'FORMACIÓN ACADÉMICA', $content);
         $xml = $this->applySectionContent($xml, 'Formación', $content);
         $xml = $this->applySectionContent($xml, 'Education', $content);
+        $xml = $this->applySectionContent($xml, 'ACADEMY TRAINING', $content);
         return $xml;
     }
 
@@ -537,7 +550,7 @@ SYSTEM;
         if (empty($items)) return $xml;
 
         $tpl = $this->templateKey;
-        $isCompactStyle = in_array($tpl, ['arelance', 'accenture', 'avanade']);
+        $isCompactStyle = in_array($tpl, ['arelance', 'accenture', 'avanade', 'ey']);
 
         $lines = [];
         foreach ($items as $item) {
@@ -567,6 +580,7 @@ SYSTEM;
         $xml = $this->applySectionContent($xml, 'FORMACION COMPLEMENTARIA', $content);
         $xml = $this->applySectionContent($xml, 'FORMACIÓN COMPLEMENTARIA', $content);
         $xml = $this->applySectionContent($xml, 'Training', $content);
+        $xml = $this->applySectionContent($xml, 'ADDITIONAL TRAINING', $content);
         return $xml;
     }
 
@@ -632,6 +646,7 @@ SYSTEM;
                 $xml = $this->applySectionContent($xml, 'COMPETENCIAS TÉCNICAS', $sectionContent, $boldKnowledge);
                 $xml = $this->applySectionContent($xml, 'Entornos/conocimientos técnicos', $sectionContent);
                 $xml = $this->applySectionContent($xml, 'Technical Skills', $sectionContent);
+                $xml = $this->applySectionContent($xml, 'TECHNICAL KNOWLEDGE', $sectionContent);
             }
         }
 
@@ -708,6 +723,8 @@ SYSTEM;
         // Buscar la sección IDIOMAS fuera de tablas para evitar confundir con
         // "Idiomas" en la tabla del cuadro de control
         $xml = $this->applySectionContentOutsideTable($xml, 'IDIOMAS', $content);
+        // EY: sección LANGUAGES (plantilla en inglés, sin tablas)
+        $xml = $this->applySectionContent($xml, 'LANGUAGES', $content);
         return $xml;
     }
 
@@ -1873,6 +1890,197 @@ SYSTEM;
         return $xml;
     }
 
+    // =========================================================================
+    // EY (plantilla en inglés) — cabecera, secciones y experiencia en PHP, sin Claude
+    // =========================================================================
+
+    /**
+     * Orquesta el relleno de la plantilla EY:
+     * - Cabecera: Candidate name / Date of birth / Residence / Nationality
+     * - Secciones (reutilizan los builders compartidos):
+     *     ACADEMY TRAINING    → formación académica
+     *     ADDITIONAL TRAINING → formación complementaria
+     *     TECHNICAL KNOWLEDGE → conocimientos técnicos
+     *     COMPETENCY SUMMARY  → perfil profesional / soft skills
+     *     LANGUAGES           → idiomas
+     * - PROFESSIONAL EXPERIENCE: bloques construidos a medida (empresa/fecha, rol,
+     *   Environment, Functions con viñetas).
+     */
+    private function applyEyNewTemplate(string $xml): string
+    {
+        $xml = $this->applyEyHeader($xml);
+        $xml = $this->applyFormacionAcademicaSection($xml);
+        $xml = $this->applyFormacionComplementariaSection($xml);
+        $xml = $this->applyConocimientosTecnicosParas($xml);
+        $xml = $this->applyEyCompetencySummary($xml);
+        $xml = $this->applyIdiomasSection($xml);
+        $xml = $this->applyEyProfessionalExperience($xml);
+        return $xml;
+    }
+
+    /**
+     * Rellena los campos de cabecera de EY añadiendo el valor tras el label
+     * ("Candidate name:", "Date of birth:", "Residence:", "Nationality:").
+     * Si no hay dato, el campo se deja vacío (no se inventa nada).
+     */
+    private function applyEyHeader(string $xml): string
+    {
+        $dp = $this->cv['datos_personales'] ?? [];
+        $xml = $this->applyEyHeaderField($xml, 'Candidate name', trim($dp['nombre_completo']  ?? ''));
+        $xml = $this->applyEyHeaderField($xml, 'Date of birth',  trim($dp['fecha_nacimiento'] ?? ''));
+        $xml = $this->applyEyHeaderField($xml, 'Residence',      trim($dp['residencia']       ?? ''));
+        $xml = $this->applyEyHeaderField($xml, 'Nationality',    trim($dp['nacionalidad']     ?? ''));
+        return $xml;
+    }
+
+    /**
+     * Busca el párrafo cuyo texto visible empieza por $labelStart e inserta un run
+     * con $value justo después del run que contiene los dos puntos del label.
+     */
+    private function applyEyHeaderField(string $xml, string $labelStart, string $value): string
+    {
+        if ($value === '') return $xml;
+
+        $labelNorm = $this->normalizeForMatch($labelStart);
+        $valEsc    = htmlspecialchars(' ' . $value, ENT_XML1, 'UTF-8');
+        $valRun    = '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' . $valEsc . '</w:t></w:r>';
+
+        $offset = 0;
+        while (preg_match('~<w:p\b[^>]*>.*?</w:p>~s', $xml, $pm, PREG_OFFSET_CAPTURE, $offset)) {
+            $paraXml = $pm[0][0];
+            $paraOff = $pm[0][1];
+
+            preg_match_all('~<w:t[^>]*>([^<]*)</w:t>~', $paraXml, $pt);
+            $paraTextNorm = $this->normalizeForMatch(implode('', $pt[1]));
+
+            if (str_starts_with($paraTextNorm, $labelNorm)) {
+                // Insertar el valor justo tras el run que contiene los dos puntos ":"
+                if (preg_match('~<w:r\b(?:(?!</w:r>).)*?<w:t[^>]*>[^<]*:[^<]*</w:t>\s*</w:r>~s', $paraXml, $rm, PREG_OFFSET_CAPTURE)) {
+                    $insertAt = $rm[0][1] + strlen($rm[0][0]);
+                    $newPara  = substr($paraXml, 0, $insertAt) . $valRun . substr($paraXml, $insertAt);
+                    return substr_replace($xml, $newPara, $paraOff, strlen($paraXml));
+                }
+                return $xml; // label encontrado pero sin run con ":" — no tocar
+            }
+            $offset = $paraOff + strlen($paraXml);
+        }
+        return $xml;
+    }
+
+    /**
+     * Sección COMPETENCY SUMMARY: perfil profesional y soft skills si existen.
+     */
+    private function applyEyCompetencySummary(string $xml): string
+    {
+        $parts = array_filter([
+            trim($this->cv['perfil_profesional'] ?? ''),
+            trim($this->cv['soft_skills']        ?? ''),
+        ]);
+        if (empty($parts)) return $xml;
+
+        $content = implode("\n", $parts);
+        return $this->applySectionContent($xml, 'COMPETENCY SUMMARY', $content);
+    }
+
+    /**
+     * Sección PROFESSIONAL EXPERIENCE: reemplaza los bloques de ejemplo desde el
+     * título hasta el final del cuerpo con un bloque por cada experiencia real.
+     * Sin experiencias: respeta la plantilla (mantiene los bloques de ejemplo).
+     */
+    private function applyEyProfessionalExperience(string $xml): string
+    {
+        $exps = $this->cv['experiencia_laboral'] ?? [];
+        if (empty($exps)) return $xml;
+
+        $titlePos = $this->findInetumParaOffset($xml, 'PROFESSIONAL EXPERIENCE');
+        if ($titlePos === null) return $xml;
+
+        $bodyEndPos = strpos($xml, '<w:sectPr', $titlePos['end']);
+        if ($bodyEndPos === false) {
+            $bodyEndPos = strpos($xml, '</w:body>', $titlePos['end']);
+        }
+        if ($bodyEndPos === false) return $xml;
+
+        $blocks = '';
+        foreach ($exps as $exp) {
+            $blocks .= $this->buildEyExperienceBlock($exp);
+        }
+        if ($blocks === '') return $xml;
+
+        return substr($xml, 0, $titlePos['end']) . $blocks . substr($xml, $bodyEndPos);
+    }
+
+    /**
+     * Construye el XML de un bloque de experiencia EY:
+     * - Tabla [empresa (negrita, izda) | fechas (negrita, dcha)] con borde inferior
+     * - Rol en negrita azul (0070C0)
+     * - "Environment: " en negrita + valor
+     * - "Functions:" en negrita + viñetas (numId 19)
+     */
+    private function buildEyExperienceBlock(array $exp): string
+    {
+        $empresa = trim($exp['empresa']             ?? '');
+        $inicio  = trim($exp['fecha_inicio']        ?? '');
+        $fin     = trim($exp['fecha_fin']           ?? '');
+        $cargo   = trim($exp['cargo']               ?? '') ?: trim($exp['categoria'] ?? '');
+        $func    = $this->stripBoldMarkers(trim($exp['funciones'] ?? ''));
+        $entorno = trim($exp['entorno_tecnologico'] ?? '');
+
+        if ($fin === '' || preg_match('/^actualidad$/i', $fin)) {
+            $fechaStr = $inicio !== '' ? $inicio . ' to date' : '';
+        } else {
+            $fechaStr = trim($inicio . ' – ' . $fin, ' –');
+        }
+
+        $empresaEsc = htmlspecialchars($empresa, ENT_XML1, 'UTF-8');
+        $fechaEsc   = htmlspecialchars($fechaStr, ENT_XML1, 'UTF-8');
+        $cargoEsc   = htmlspecialchars($cargo, ENT_XML1, 'UTF-8');
+
+        $out = '';
+
+        // Tabla empresa | fechas con borde inferior
+        $out .= '<w:tbl>';
+        $out .= '<w:tblPr><w:tblW w:w="9750" w:type="dxa"/><w:tblBorders><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="0000"/></w:tblPr>';
+        $out .= '<w:tblGrid><w:gridCol w:w="6000"/><w:gridCol w:w="3750"/></w:tblGrid>';
+        $out .= '<w:tr>';
+        $out .= '<w:tc><w:tcPr><w:tcW w:w="6000" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>'
+              . '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' . $empresaEsc . '</w:t></w:r></w:p></w:tc>';
+        $out .= '<w:tc><w:tcPr><w:tcW w:w="3750" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>'
+              . '<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' . $fechaEsc . '</w:t></w:r></w:p></w:tc>';
+        $out .= '</w:tr></w:tbl>';
+
+        // Rol (negrita, azul)
+        if ($cargo !== '') {
+            $out .= '<w:p><w:pPr><w:spacing w:before="60" w:after="0"/></w:pPr>'
+                  . '<w:r><w:rPr><w:b/><w:color w:val="0070C0"/></w:rPr><w:t xml:space="preserve">' . $cargoEsc . '</w:t></w:r></w:p>';
+        }
+
+        // Environment: label negrita + valor
+        if ($entorno !== '') {
+            $entornoEsc = htmlspecialchars($this->normalizeEntornoCommas($entorno), ENT_XML1, 'UTF-8');
+            $out .= '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr>'
+                  . '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Environment: </w:t></w:r>'
+                  . '<w:r><w:t xml:space="preserve">' . $entornoEsc . '</w:t></w:r></w:p>';
+        }
+
+        // Functions: label negrita + viñetas
+        if ($func !== '') {
+            $out .= '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr>'
+                  . '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Functions:</w:t></w:r></w:p>';
+            $bullets = $this->splitFuncionesIntoBullets($func);
+            foreach ($bullets as $b) {
+                $bEsc = htmlspecialchars($b, ENT_XML1, 'UTF-8');
+                $out .= '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="19"/></w:numPr><w:spacing w:after="0"/></w:pPr>'
+                      . '<w:r><w:t xml:space="preserve">' . $bEsc . '</w:t></w:r></w:p>';
+            }
+        }
+
+        // Separador entre experiencias
+        $out .= '<w:p/>';
+
+        return $out;
+    }
+
     private function applyParagraphWithLabel(string $xml, string $label, string $placeholder, string $value): string
     {
         if (empty($label)) return $xml;
@@ -1952,6 +2160,9 @@ SYSTEM;
             // Inglés (Avanade)
             'SUMMARY', 'GEOGRAPHIC AVAILABILITY', 'TECHNICAL SKILLS',
             'MICROSOFT SPECIFIC SKILL', 'EXPERIENCE', 'TRAINING', 'EDUCATION',
+            // Inglés (EY)
+            'ACADEMY TRAINING', 'ADDITIONAL TRAINING', 'TECHNICAL KNOWLEDGE',
+            'COMPETENCY SUMMARY', 'LANGUAGES', 'PROFESSIONAL EXPERIENCE',
         ]);
 
         // Buscar el párrafo de título iterando TODOS los párrafos y concatenando sus runs
@@ -2144,6 +2355,7 @@ SYSTEM;
             'arelance'  => 'Myriad Pro',
             'accenture' => 'Myriad Pro',
             'ricoh'     => 'Calibri',
+            'ey'        => 'Myriad Pro',
         ];
         if (isset($fontMap[$this->templateKey])) {
             $font = $fontMap[$this->templateKey];

@@ -47,6 +47,7 @@ define('TEMPLATES', [
     'inetum'    => ['name' => 'Inetum',            'file' => 'Inetum.docx'],
     'ricoh'     => ['name' => 'Ricoh',             'file' => 'Ricoh.docx'],
     'atos'      => ['name' => 'ATOS',              'file' => 'Plantilla_ATOS.docx'],
+    'ey'        => ['name' => 'EY',                'file' => 'EY.docx'],
 ]);
 
 // Base de datos
