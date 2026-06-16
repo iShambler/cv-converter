@@ -226,10 +226,12 @@ JSON;
         }
 
         $payload = json_encode([
-            'model'      => $this->model,
-            'max_tokens' => 16384,
-            'system'     => $this->getSystemPrompt(),
-            'messages'   => [['role' => 'user', 'content' => $contentParts]],
+            'model'         => $this->model,
+            'max_tokens'    => 16384,
+            'thinking'      => ['type' => 'disabled'],
+            'output_config' => ['effort' => 'low'],
+            'system'        => $this->getSystemPrompt(),
+            'messages'      => [['role' => 'user', 'content' => $contentParts]],
         ]);
 
         return $this->doRequest($payload);
@@ -241,10 +243,12 @@ JSON;
         $userPrompt    = "Analiza este currículum vitae y extrae todos los datos que aparecen LITERALMENTE. Devuelve ÚNICAMENTE el siguiente JSON relleno, sin markdown:\n\n$jsonStructure\n\nTEXTO DEL CV:\n---\n$cvText\n---";
 
         $payload = json_encode([
-            'model'      => $this->model,
-            'max_tokens' => 16384,
-            'system'     => $this->getSystemPrompt(),
-            'messages'   => [['role' => 'user', 'content' => $userPrompt]],
+            'model'         => $this->model,
+            'max_tokens'    => 16384,
+            'thinking'      => ['type' => 'disabled'],
+            'output_config' => ['effort' => 'low'],
+            'system'        => $this->getSystemPrompt(),
+            'messages'      => [['role' => 'user', 'content' => $userPrompt]],
         ]);
 
         return $this->doRequest($payload);

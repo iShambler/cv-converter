@@ -282,10 +282,12 @@ SYSTEM;
         $userPrompt = "PLANTILLA: {$templateName}\n\nESTRUCTURA:\n---\n{$templateText}\n---\n\nDATOS:\n---\n{$dataJson}\n---";
 
         $payload = json_encode([
-            'model'      => $this->model,
-            'max_tokens' => 4096,
-            'system'     => $systemPrompt,
-            'messages'   => [['role' => 'user', 'content' => $userPrompt]],
+            'model'         => $this->model,
+            'max_tokens'    => 4096,
+            'thinking'      => ['type' => 'disabled'],
+            'output_config' => ['effort' => 'low'],
+            'system'        => $systemPrompt,
+            'messages'      => [['role' => 'user', 'content' => $userPrompt]],
         ]);
 
         $response = $this->doRequest($payload);
