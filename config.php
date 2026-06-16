@@ -25,7 +25,7 @@ if (file_exists($envFile)) {
 // API de Anthropic (Claude)
 // La constante es solo fallback; en producción usar .env
 define('ANTHROPIC_API_KEY', getenv('ANTHROPIC_API_KEY') ?: '');
-define('ANTHROPIC_MODEL', 'claude-sonnet-4-20250514');
+define('ANTHROPIC_MODEL', 'claude-sonnet-4-6');
 define('ANTHROPIC_API_URL', 'https://api.anthropic.com/v1/messages');
 
 // Rutas
