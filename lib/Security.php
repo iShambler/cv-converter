@@ -13,7 +13,8 @@ class Security
         if (session_status() === PHP_SESSION_ACTIVE) return;
 
         ini_set('session.cookie_httponly', '1');
-        ini_set('session.cookie_samesite', 'Strict');
+        ini_set('session.cookie_samesite', 'None');  // permite la cookie dentro de un iframe cross-site (wnet)
+        ini_set('session.cookie_secure', '1');        // OBLIGATORIO con SameSite=None: solo se enviará por HTTPS
         ini_set('session.use_strict_mode', '1');
 
         session_start();
